@@ -19,6 +19,22 @@ import {
     getDependentSkills,
 } from "../lib/skillsGraph.js";
 
+const LANG_NAME_MAP = {
+    en: "English",
+    hi: "Hindi (हिन्दी)",
+    bn: "Bengali (বাংলা)",
+    gu: "Gujarati (ગુજરાતી)",
+    mr: "Marathi (मराठी)",
+    ta: "Tamil (தமிழ்)",
+    te: "Telugu (తెలుగు)",
+    kn: "Kannada (ಕನ್ನಡ)",
+    ml: "Malayalam (മലയാളം)",
+    pa: "Punjabi (ਪੰਜਾਬੀ)",
+    or: "Odia (ଓଡ଼ିଆ)",
+    od: "Odia (ଓଡ଼ିଆ)",
+    as: "Assamese (অসমীয়া)",
+};
+
 const LEARNING_TARGET_RULES = [
     { skillId: "dsa", patterns: [/data structures?/i, /\bdsa\b/i, /algorithms?/i] },
     { skillId: "oop", patterns: [/\boop\b/i, /object[- ]oriented/i, /\bclasses?\b/i, /\bobjects?\b/i, /inheritance/i, /polymorphism/i, /encapsulation/i] },
@@ -158,7 +174,7 @@ async function callLLM(
 
 // === 1. LEARNING GAP AGENT ===
 // Analyzes conversation/quiz/doubt input against the SkillDependency graph, outputs detected gaps.
-export async function detectLearningGaps({ userMessage, context, conversationHistory = [], masteryScores, existingGaps }) {
+export async function detectLearningGaps({ userMessage, context, conversationHistory = [], masteryScores, existingGaps, language = "en" }) {
     const combinedText = [
         context,
         userMessage,
@@ -175,6 +191,7 @@ export async function detectLearningGaps({ userMessage, context, conversationHis
 
     const targetSkills = inferTargetsFromText(combinedText)
     const heuristicGaps = buildHeuristicGaps(targetSkills, existingGaps)
+    const langName = LANG_NAME_MAP[language] || language || "English"
 
     if (heuristicGaps.length > 0) {
         const targetNames = targetSkills.map((skillId) => getSkillById(skillId)?.name || skillId).filter(Boolean)
@@ -198,6 +215,9 @@ export async function detectLearningGaps({ userMessage, context, conversationHis
     const existingGapNames = existingGaps?.map(g => g.skill_name).join(", ") || "None";
 
     const prompt = `You are KYREN's Learning Gap Agent. Your job is to analyze what a student says and detect which STEM skills they are missing.
+
+Student's Preferred Language: ${langName}
+CRITICAL LANGUAGE INSTRUCTION: Write all 'reasoning' and 'followup_question' strictly in ${langName}.
 
 Available skills:
 ${skillsList}
@@ -256,11 +276,15 @@ Return a JSON object with:
 
 // === 2. TASK PLANNING AGENT ===
 // Converts gaps into LearningTasks, computes priority/order
-export async function planLearningTasks({ detectedGaps, masteryScores, userGoal }) {
+export async function planLearningTasks({ detectedGaps, masteryScores, userGoal, language = "en" }) {
     const gapsInfo = detectedGaps.map(g => `- ${g.skill_name} (${g.skill_id}): severity ${g.severity}`).join("\n");
     const masteryInfo = masteryScores?.map(m => `${m.skill_name}: ${m.percentage}% (${m.status})`).join("\n") || "No mastery data";
+    const langName = LANG_NAME_MAP[language] || language || "English";
 
     const prompt = `You are KYREN's Task Planning Agent. Given detected learning gaps and the student's current mastery, create a prioritized learning task list.
+
+Student's Preferred Language: ${langName}
+CRITICAL LANGUAGE INSTRUCTION: Write all task 'title', 'description', 'reason', and 'summary' strictly in ${langName}.
 
 Detected gaps:
 ${gapsInfo}
@@ -632,8 +656,12 @@ Return JSON with an array of insight strings, each 1-2 sentences.`;
 }
 
 // === DOUBT SOLVER AGENT (global) ===
-export async function solveDoubt({ userMessage, language, skillContext }) {
-    const prompt = `You are KYREN's AI Doubt Solver. A student has asked a STEM question. Answer in their preferred language: ${language || "en"}.
+export async function solveDoubt({ userMessage, language = "en", skillContext }) {
+    const langName = LANG_NAME_MAP[language] || language || "English";
+    const prompt = `You are KYREN's AI Doubt Solver. A student has asked a STEM question.
+
+Student's Preferred Language: ${langName}
+CRITICAL LANGUAGE INSTRUCTION: Answer strictly in ${langName}. Write all 'explanation', 'example', and 'mini_question' in ${langName}.
 
 Student's question: "${userMessage}"
 ${skillContext ? `Related skill context: ${skillContext}` : ""}
