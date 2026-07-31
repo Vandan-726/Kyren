@@ -9,19 +9,15 @@ import { Textarea } from "@/components/ui/textarea";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { toast } from "sonner";
 import {
-    Send, Mic, Sparkles, Brain, ArrowRight,
-    Loader2, Bot, User as UserIcon, Activity,
-    Trash2, Plus, Edit2, Network, Target, History
+    Send, Mic, Sparkles, Loader2, Bot, Activity,
+    Trash2, Edit2, Network, Target, Volume2
 } from "lucide-react";
-import { createNotification } from "@/lib/notifications";
+import { speakText, speechToText } from "@/lib/sarvam";
 import {
     detectLearningGaps,
     planLearningTasks,
 } from "@/lib/aiAgents";
-import {
-    getSkillById,
-    getAllPrerequisites,
-} from "@/lib/skillsGraph";
+import { getSkillById } from "@/lib/skillsGraph";
 
 import { cn } from "@/lib/utils";
 
@@ -185,6 +181,7 @@ export default function Companion() {
             detectedGaps: gaps,
             masteryScores,
             userGoal,
+            language: selectedLang,
         });
 
         const oldTasks = await kyren.entities.LearningTask.filter({ user_id: userId }, "priority");
@@ -225,7 +222,21 @@ export default function Companion() {
 
         setShowGapBanner(true);
         await refreshAll();
-    }, [refreshAll, masteryScores, userId]);
+    }, [refreshAll, masteryScores, userId, selectedLang]);
+
+    const [recording, setRecording] = useState(false);
+    const [speakingMsgId, setSpeakingMsgId] = useState(null);
+
+    const handleSpeak = async (msgId, text) => {
+        try {
+            setSpeakingMsgId(msgId);
+            await speakText(text.replace(/__OUT_OF_SCOPE__/g, ""), selectedLang);
+        } catch (e) {
+            toast.error("Speech synthesis failed: " + (e.message || "Unknown error"));
+        } finally {
+            setSpeakingMsgId(null);
+        }
+    };
 
     const handleSend = async (text) => {
         if (!text.trim() || !conversation || loading) return;
@@ -253,6 +264,7 @@ export default function Companion() {
                 conversationHistory,
                 masteryScores,
                 existingGaps,
+                language: selectedLang,
             });
 
             let aiResponseText = "";
@@ -290,8 +302,50 @@ export default function Companion() {
         }
     };
 
-    const handleMic = () => {
-        if (!("webkitSpeechRecognition" in window) && !("SpeechRecognition" in window)) return;
+    const handleMic = async () => {
+        if (recording) return;
+        try {
+            if (navigator.mediaDevices && window.MediaRecorder) {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                const mediaRecorder = new MediaRecorder(stream);
+                const audioChunks = [];
+
+                mediaRecorder.ondataavailable = (e) => audioChunks.push(e.data);
+                mediaRecorder.onstop = async () => {
+                    stream.getTracks().forEach((track) => track.stop());
+                    const audioBlob = new Blob(audioChunks, { type: "audio/webm" });
+                    setRecording(false);
+                    toast.info("Transcribing audio via Sarvam AI...");
+                    try {
+                        const result = await speechToText(audioBlob, selectedLang);
+                        if (result?.transcript) {
+                            setInput(result.transcript);
+                            toast.success("Voice transcribed successfully!");
+                        }
+                    } catch (err) {
+                        console.error("STT error", err);
+                        toast.error("Sarvam STT failed: " + (err.message || "Failed"));
+                    }
+                };
+
+                setRecording(true);
+                mediaRecorder.start();
+                toast.info("Listening... Speak now (recording for 5 seconds)");
+                setTimeout(() => {
+                    if (mediaRecorder.state === "recording") {
+                        mediaRecorder.stop();
+                    }
+                }, 5000);
+                return;
+            }
+        } catch (e) {
+            console.warn("MediaRecorder permission or browser issue, falling back to WebSpeech", e);
+        }
+
+        if (!("webkitSpeechRecognition" in window) && !("SpeechRecognition" in window)) {
+            toast.error("Voice input is not supported in this browser.");
+            return;
+        }
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         const recognition = new SpeechRecognition();
         recognition.lang = selectedLang === "en" ? "en-US" : selectedLang;
@@ -400,8 +454,22 @@ export default function Companion() {
                                     ) : (
                                         <>
                                             {isAi && (
-                                                <div className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-primary flex items-center gap-1.5">
-                                                    <Sparkles className="w-3 h-3" /> KYREN AI
+                                                <div className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-primary flex items-center justify-between gap-1.5">
+                                                    <div className="flex items-center gap-1.5">
+                                                        <Sparkles className="w-3 h-3" /> KYREN AI
+                                                    </div>
+                                                    <button
+                                                        onClick={() => handleSpeak(msg.id || i, msg.content)}
+                                                        disabled={speakingMsgId === (msg.id || i)}
+                                                        className="text-muted-foreground hover:text-primary transition-colors p-1 rounded-full hover:bg-primary/10"
+                                                        title="Listen in your language"
+                                                    >
+                                                        {speakingMsgId === (msg.id || i) ? (
+                                                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                                        ) : (
+                                                            <Volume2 className="w-3.5 h-3.5" />
+                                                        )}
+                                                    </button>
                                                 </div>
                                             )}
                                             <p className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content.replace("\\n\\n__OUT_OF_SCOPE__", "")}</p>

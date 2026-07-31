@@ -6,9 +6,10 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import {
-    Send, Bot, User as UserIcon, Sparkles, Loader2,
-    HelpCircle, Plus
+    Send, Sparkles, Loader2,
+    HelpCircle, Plus, Mic, Volume2
 } from "lucide-react";
+import { speakText, speechToText } from "@/lib/sarvam";
 import { solveDoubt } from "@/lib/aiAgents";
 import { getSkillById } from "@/lib/skillsGraph";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -26,6 +27,70 @@ export default function DoubtSolver() {
     const [messages, setMessages] = useState([]);
     const [input, setInput] = useState("");
     const [loading, setLoading] = useState(false);
+    const [speakingMsgId, setSpeakingMsgId] = useState(null);
+    const [recording, setRecording] = useState(false);
+
+    const handleSpeak = async (msgId, text) => {
+        try {
+            setSpeakingMsgId(msgId);
+            await speakText(text.replace(/__OUT_OF_SCOPE__/g, ""), selectedLang);
+        } catch (e) {
+            toast.error("Speech synthesis failed: " + (e.message || "Unknown error"));
+        } finally {
+            setSpeakingMsgId(null);
+        }
+    };
+
+    const handleMic = async () => {
+        if (recording) return;
+        try {
+            if (navigator.mediaDevices && window.MediaRecorder) {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                const mediaRecorder = new MediaRecorder(stream);
+                const audioChunks = [];
+
+                mediaRecorder.ondataavailable = (e) => audioChunks.push(e.data);
+                mediaRecorder.onstop = async () => {
+                    stream.getTracks().forEach((track) => track.stop());
+                    const audioBlob = new Blob(audioChunks, { type: "audio/webm" });
+                    setRecording(false);
+                    toast.info("Transcribing audio via Sarvam AI...");
+                    try {
+                        const result = await speechToText(audioBlob, selectedLang);
+                        if (result?.transcript) {
+                            setInput(result.transcript);
+                            toast.success("Voice transcribed successfully!");
+                        }
+                    } catch (err) {
+                        console.error("STT error", err);
+                        toast.error("Sarvam STT failed: " + (err.message || "Failed"));
+                    }
+                };
+
+                setRecording(true);
+                mediaRecorder.start();
+                toast.info("Listening... Speak now (recording for 5 seconds)");
+                setTimeout(() => {
+                    if (mediaRecorder.state === "recording") {
+                        mediaRecorder.stop();
+                    }
+                }, 5000);
+                return;
+            }
+        } catch (e) {
+            console.warn("MediaRecorder permission or browser issue, falling back to WebSpeech", e);
+        }
+
+        if (!("webkitSpeechRecognition" in window) && !("SpeechRecognition" in window)) {
+            toast.error("Voice input is not supported in this browser.");
+            return;
+        }
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        const recognition = new SpeechRecognition();
+        recognition.lang = selectedLang === "en" ? "en-US" : selectedLang;
+        recognition.onresult = (event) => setInput(event.results[0][0].transcript);
+        recognition.start();
+    };
     const [pendingGap, setPendingGap] = useState(null);
     const endRef = useRef(null);
     const userId = user?.id;
@@ -221,8 +286,22 @@ export default function DoubtSolver() {
                                         : "bg-card text-foreground border border-border/50 rounded-bl-sm"
                                 )}>
                                     {isAi && (
-                                        <div className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-primary flex items-center gap-1.5">
-                                            <Sparkles className="w-3 h-3" /> KYREN AI
+                                        <div className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-primary flex items-center justify-between gap-1.5">
+                                            <div className="flex items-center gap-1.5">
+                                                <Sparkles className="w-3 h-3" /> KYREN AI
+                                            </div>
+                                            <button
+                                                onClick={() => handleSpeak(msg.id || i, msg.content)}
+                                                disabled={speakingMsgId === (msg.id || i)}
+                                                className="text-muted-foreground hover:text-primary transition-colors p-1 rounded-full hover:bg-primary/10"
+                                                title="Listen in your language"
+                                            >
+                                                {speakingMsgId === (msg.id || i) ? (
+                                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                                ) : (
+                                                    <Volume2 className="w-3.5 h-3.5" />
+                                                )}
+                                            </button>
                                         </div>
                                     )}
                                     <p className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content.replace("\\n\\n__OUT_OF_SCOPE__", "")}</p>
@@ -298,7 +377,18 @@ export default function DoubtSolver() {
                         className="flex-1 resize-none min-h-[44px] max-h-32"
                         disabled={loading}
                     />
-                    <Button onClick={() => handleSend(input)} size="icon" disabled={loading || !input.trim()} className="rounded-xl h-11 w-11 bg-primary">
+                    <Button
+                        onClick={handleMic}
+                        size="icon"
+                        variant="outline"
+                        type="button"
+                        className={cn("rounded-xl h-11 w-11 shrink-0", recording && "bg-destructive/10 text-destructive border-destructive animate-pulse")}
+                        title="Voice Input via Sarvam AI"
+                        disabled={loading}
+                    >
+                        <Mic className="w-4 h-4" />
+                    </Button>
+                    <Button onClick={() => handleSend(input)} size="icon" disabled={loading || !input.trim()} className="rounded-xl h-11 w-11 bg-primary shrink-0">
                         <Send className="w-4 h-4" />
                     </Button>
                 </div>
