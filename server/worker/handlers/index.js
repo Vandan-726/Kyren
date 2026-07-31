@@ -7,5 +7,6 @@
 import "./courseGeneration.js"
 import "./roadmapGeneration.js"
 import "./quizGeneration.js"
+import "./courseContentHandler.js"
 
 export {}

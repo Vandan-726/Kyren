@@ -16,6 +16,7 @@ import progressRouter from "./progress.js"
 import skillsRouter from "./skills.js"
 import agentsRouter from "./agents.js"
 import entitiesRouter from "./entities.js"
+import orchestrationRouter from "./orchestration.js"
 
 const router = Router()
 
@@ -28,6 +29,7 @@ router.use("/courses", coursesRouter)
 router.use("/progress", progressRouter)
 router.use("/skills", skillsRouter)
 router.use("/agents", agentsRouter)
+router.use("/orchestrate", orchestrationRouter)
 router.use("/", entitiesRouter)
 
 export default router

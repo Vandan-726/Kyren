@@ -73,6 +73,8 @@ export const env = {
     geminiModel: read("GEMINI_MODEL", "gemini-2.5-flash"),
     geminiFastModel: read("GEMINI_FAST_MODEL", "gemini-2.5-flash"),
     timeoutMs: readInt("AI_TIMEOUT_MS", 120000),
+    monthlyBudgetUsd: readInt("AI_MONTHLY_BUDGET_USD", 50),
+    contextCacheTtlMs: readInt("AI_CONTEXT_CACHE_TTL_MS", 3600000),
   },
 
   sarvam: {

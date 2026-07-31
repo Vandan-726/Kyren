@@ -9,6 +9,7 @@
 
 import { supabase } from "../config/supabase.js"
 import { tooManyRequests } from "../utils/errors.js"
+import { env } from "../config/env.js"
 
 /** Daily per-user ceilings. Generation is capped hardest: it fans out. */
 const DAILY_LIMITS = {
@@ -146,6 +147,43 @@ export async function getUsageSummary(userId, { days = 7 } = {}) {
       latencies.length > 0 ? Math.round(latencies.reduce((a, b) => a + b, 0) / latencies.length) : null,
     byType,
     dailyLimits: DAILY_LIMITS,
+  }
+}
+
+/**
+ * Checks the total AI cost estimate accrued during the current calendar month.
+ *
+ * @returns {Promise<{withinBudget: boolean, currentSpend: number, budgetLimit: number, percentUsed: number}>}
+ */
+export async function checkMonthlyBudget() {
+  const now = new Date()
+  const startOfMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString()
+
+  const { data, error } = await supabase
+    .from("ai_api_usage")
+    .select("cost_estimate")
+    .eq("request_status", "success")
+    .gte("created_at", startOfMonth)
+
+  if (error) {
+    console.error("[v0] Failed to fetch monthly spend:", error.message)
+    return {
+      withinBudget: true,
+      currentSpend: 0,
+      budgetLimit: env.ai.monthlyBudgetUsd ?? 50,
+      percentUsed: 0,
+    }
+  }
+
+  const currentSpend = (data ?? []).reduce((sum, row) => sum + (Number(row.cost_estimate) || 0), 0)
+  const budgetLimit = env.ai.monthlyBudgetUsd ?? 50
+  const percentUsed = budgetLimit > 0 ? (currentSpend / budgetLimit) * 100 : 0
+
+  return {
+    withinBudget: currentSpend < budgetLimit,
+    currentSpend: Number(currentSpend.toFixed(4)),
+    budgetLimit,
+    percentUsed: Number(percentUsed.toFixed(2)),
   }
 }
 

@@ -1,5 +1,6 @@
 import { Router } from "express"
 import { supabase, unwrap } from "../config/supabase.js"
+import { enqueueJob } from "../services/jobQueue.js"
 import { requireAuth } from "../middleware/auth.js"
 import { ok } from "../utils/respond.js"
 import {
@@ -442,6 +443,24 @@ const handleRequest = async (req, res, next) => {
         await updateQuery.select("*").single(),
         `Updating ${tableName}`
       )
+
+      // Trigger course generation when a learning task status is approved
+      if (entityName === "LearningTask" && row.status === "approved") {
+        console.log(`[Task Trigger] Learning task ${row.id} approved. Enqueuing course.generate job...`)
+        try {
+          await enqueueJob({
+            type: "course.generate",
+            userId: req.user.id,
+            payload: {
+              skillId: row.skill_id,
+              taskId: row.id,
+            },
+          })
+        } catch (jobError) {
+          console.error("[Task Trigger] Failed to enqueue course.generate:", jobError.message)
+        }
+      }
+
       let data = row
       data = mapEntityDataToFrontend(entityName, data)
       if (MAPPERS[entityName]) {
