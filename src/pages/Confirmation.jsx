@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { useAuth } from "@/lib/AuthContext";
@@ -10,25 +10,148 @@ import {
     Check, ArrowLeft, Sparkles, Network,
     Loader2, Edit, Trash2, MessageSquare
 } from "lucide-react";
-import { architectCourse, generateLessonContent, generateQuiz } from "@/lib/aiAgents";
+import { architectCourse, generateLessonContent, generateQuiz, planLearningTasks } from "@/lib/aiAgents";
 import { getSkillById, getDirectPrerequisites } from "@/lib/skillsGraph";
 import { cn } from "@/lib/utils";
 
 export default function Confirmation() {
     const navigate = useNavigate();
     const { user } = useAuth();
-    const { learningTasks, masteryScores, refreshAll } = useAppData();
+    const { learningTasks, masteryScores, refreshAll, loading } = useAppData();
     const [editMode, setEditMode] = useState(false);
-    const [tasks, setTasks] = useState([]);
+    const [tasks, setTasks] = useState(() => {
+        if (typeof window === "undefined") return [];
+        const userId = user?.id;
+        if (!userId) return [];
+        try {
+            const cached = JSON.parse(localStorage.getItem(`kyren-review-plan-${userId}`) || "null");
+            if (Array.isArray(cached?.tasks) && cached.tasks.length > 0) {
+                return cached.tasks.sort((a, b) => (a.priority || 0) - (b.priority || 0));
+            }
+        } catch (error) {
+            console.error("Failed to seed cached tasks", error);
+        }
+        return [];
+    });
     const [generating, setGenerating] = useState(false);
     const [generatingStep, setGeneratingStep] = useState("");
+    const [restoringPlan, setRestoringPlan] = useState(false);
+    const [planBuilding, setPlanBuilding] = useState(() => {
+        if (typeof window === "undefined") return false;
+        const userId = user?.id;
+        if (!userId) return false;
+        try {
+            const cached = JSON.parse(localStorage.getItem(`kyren-review-plan-${userId}`) || "null");
+            return cached?.status === "building" && !(Array.isArray(cached?.tasks) && cached.tasks.length > 0);
+        } catch (error) {
+            console.error("Failed to seed plan building state", error);
+            return false;
+        }
+    });
 
     const userId = user?.id;
+    const reviewKey = userId ? `kyren-review-plan-${userId}` : null;
     const detectedTasks = learningTasks.filter(t => t.status === "Detected" || t.status === "Suggested" || t.status === "Approved").sort((a, b) => (a.priority || 0) - (b.priority || 0));
+    const visibleTasks = tasks.length > 0 ? tasks : detectedTasks;
+
+    const readCachedReviewPlan = useCallback(() => {
+        if (!reviewKey) return null;
+        try {
+            return JSON.parse(localStorage.getItem(reviewKey) || "null");
+        } catch (error) {
+            console.error("Failed to read cached review plan", error);
+            return null;
+        }
+    }, [reviewKey]);
 
     useEffect(() => {
-        setTasks(detectedTasks);
-    }, [learningTasks]);
+        if (detectedTasks.length > 0) {
+            setTasks(detectedTasks);
+            setPlanBuilding(false);
+        }
+    }, [detectedTasks]);
+
+    useEffect(() => {
+        const cached = readCachedReviewPlan();
+        if (Array.isArray(cached?.tasks) && cached.tasks.length > 0) {
+            setTasks(cached.tasks.sort((a, b) => (a.priority || 0) - (b.priority || 0)));
+            setPlanBuilding(false);
+        } else if (cached?.status === "building") {
+            setPlanBuilding(true);
+        }
+    }, [readCachedReviewPlan]);
+
+    const restorePlanFromCache = useCallback(async () => {
+        if (!reviewKey || restoringPlan) return;
+        const cached = readCachedReviewPlan();
+        if (Array.isArray(cached?.tasks) && cached.tasks.length > 0) {
+            const cachedTasks = cached.tasks.sort((a, b) => (a.priority || 0) - (b.priority || 0));
+            setTasks(cachedTasks);
+            setPlanBuilding(false);
+            return cachedTasks;
+        }
+        if (cached?.status === "building") {
+            setPlanBuilding(true);
+            return [];
+        }
+        if (!cached?.gaps?.length) return [];
+
+        setRestoringPlan(true);
+        try {
+            const planned = await planLearningTasks({
+                detectedGaps: cached.gaps,
+                masteryScores,
+                userGoal: cached.userGoal || user?.learning_goal || "",
+            });
+
+            const plannedTasks = planned.tasks || [];
+            if (plannedTasks.length === 0) return [];
+
+            const existingTasks = await kyren.entities.LearningTask.filter({ user_id: userId });
+            const existingSkillIds = new Set(existingTasks.map((task) => task.skill_id));
+
+            for (let index = 0; index < plannedTasks.length; index += 1) {
+                const task = plannedTasks[index];
+                if (task.skill_id && existingSkillIds.has(task.skill_id)) continue;
+
+                const created = await kyren.entities.LearningTask.create({
+                    user_id: userId,
+                    title: task.title,
+                    description: task.description,
+                    reason: task.reason,
+                    skill_id: task.skill_id,
+                    skill_name: task.skill_name || getSkillById(task.skill_id)?.name || task.skill_id,
+                    difficulty: task.difficulty,
+                    priority: task.priority ?? index + 1,
+                    estimated_time: task.estimated_time,
+                    status: "Suggested",
+                });
+            }
+
+            await refreshAll();
+            const refreshedTasks = await kyren.entities.LearningTask.filter({ user_id: userId }, "priority");
+            const visibleRefreshedTasks = refreshedTasks
+                .filter((task) => ["Detected", "Suggested", "Approved"].includes(task.status))
+                .sort((a, b) => (a.priority || 0) - (b.priority || 0));
+            setTasks(visibleRefreshedTasks);
+            localStorage.setItem(reviewKey, JSON.stringify({
+                ...cached,
+                tasks: visibleRefreshedTasks,
+                updatedAt: new Date().toISOString(),
+            }));
+            return visibleRefreshedTasks;
+        } catch (error) {
+            console.error("Failed to restore cached learning plan", error);
+            return [];
+        } finally {
+            setRestoringPlan(false);
+        }
+    }, [masteryScores, readCachedReviewPlan, refreshAll, restoringPlan, reviewKey, user?.learning_goal, userId]);
+
+    useEffect(() => {
+        if (loading || detectedTasks.length > 0) return;
+        restorePlanFromCache();
+    }, [loading, detectedTasks.length, restorePlanFromCache]);
 
     const handleRemoveTask = async (taskId) => {
         try {
@@ -51,16 +174,26 @@ export default function Confirmation() {
     };
 
     const handleGeneratePlan = async () => {
-        const approvedTasks = tasks.filter(t => t.status === "Approved");
+        let currentTasks = tasks;
+        if (currentTasks.length === 0) {
+            currentTasks = await restorePlanFromCache();
+            if (!currentTasks || currentTasks.length === 0) {
+                currentTasks = await kyren.entities.LearningTask.filter({ user_id: userId }, "priority");
+                currentTasks = currentTasks.filter(t => t.status === "Detected" || t.status === "Suggested" || t.status === "Approved")
+                    .sort((a, b) => (a.priority || 0) - (b.priority || 0));
+            }
+        }
+
+        const approvedTasks = currentTasks.filter(t => t.status === "Approved");
         if (approvedTasks.length === 0) {
             // Auto-approve all if none approved
-            for (const t of tasks) {
+            for (const t of currentTasks) {
                 await kyren.entities.LearningTask.update(t.id, { status: "Approved" });
             }
         }
 
         setGenerating(true);
-        const firstTask = tasks.find(t => t.status === "Approved") || tasks[0];
+        const firstTask = currentTasks.find(t => t.status === "Approved") || currentTasks[0];
 
         try {
             // Step 1: Course Architecture
@@ -163,6 +296,9 @@ export default function Confirmation() {
             }
 
             toast.success("Your learning plan is ready!");
+            if (reviewKey) {
+                localStorage.removeItem(reviewKey);
+            }
             await refreshAll();
             navigate(`/courses/${course.id}`);
         } catch (e) {
@@ -174,7 +310,7 @@ export default function Confirmation() {
         }
     };
 
-    if (detectedTasks.length === 0 && !generating) {
+    if (visibleTasks.length === 0 && !restoringPlan && !planBuilding && !generating) {
         return (
             <div className="p-6 md:p-8 max-w-3xl mx-auto">
                 <div className="text-center py-16">
@@ -182,11 +318,25 @@ export default function Confirmation() {
                         <Network className="w-8 h-8 text-muted-foreground" />
                     </div>
                     <h2 className="text-xl font-semibold mb-2">No Learning Tasks Detected Yet</h2>
-                    <p className="text-muted-foreground mb-6">Talk to KYREN to discover what you need to learn.</p>
+                    <p className="text-muted-foreground mb-6">
+                        Talk to KYREN to discover what you need to learn, or return after a chat and KYREN will rebuild the plan automatically.
+                    </p>
                     <Button onClick={() => navigate("/ai-tutor")} className="bg-primary">
                         <MessageSquare className="w-4 h-4 mr-2" />
                         Talk to KYREN
                     </Button>
+                </div>
+            </div>
+        );
+    }
+
+    if (restoringPlan || planBuilding) {
+        return (
+            <div className="p-6 md:p-8 max-w-3xl mx-auto">
+                <div className="text-center py-16">
+                    <Loader2 className="w-12 h-12 animate-spin text-primary mx-auto mb-4" />
+                    <h2 className="text-xl font-semibold mb-2">Restoring Your Learning Plan</h2>
+                    <p className="text-muted-foreground">KYREN is rebuilding the detected gaps into a plan now.</p>
                 </div>
             </div>
         );
@@ -219,14 +369,14 @@ export default function Confirmation() {
                 <div className="flex items-center justify-between">
                     <h2 className="font-semibold flex items-center gap-2">
                         <Sparkles className="w-4 h-4 text-primary" />
-                        Proposed Learning Path ({tasks.length} steps)
+                        Proposed Learning Path ({visibleTasks.length} steps)
                     </h2>
                     <Button variant="outline" size="sm" onClick={() => setEditMode(!editMode)}>
                         {editMode ? <><Check className="w-3.5 h-3.5 mr-1" /> Done</> : <><Edit className="w-3.5 h-3.5 mr-1" /> Edit My Path</>}
                     </Button>
                 </div>
 
-                {tasks.map((task, i) => {
+                {visibleTasks.map((task, i) => {
                     const prereqs = getDirectPrerequisites(task.skill_id);
                     return (
                         <motion.div
@@ -279,7 +429,7 @@ export default function Confirmation() {
                                         </button>
                                     </div>
                                 ) : (
-                                    <div className="text-2xl text-muted-foreground shrink-0">{i < tasks.length - 1 ? "↓" : ""}</div>
+                                    <div className="text-2xl text-muted-foreground shrink-0">{i < visibleTasks.length - 1 ? "↓" : ""}</div>
                                 )}
                             </div>
                         </motion.div>

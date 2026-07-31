@@ -12,7 +12,7 @@ export async function createNotification(userId, type, title, message, payload =
             type,
             title,
             message,
-            payload,
+            payload: JSON.stringify(payload),
         });
     } catch (e) {
         console.error("Failed to create notification:", e);

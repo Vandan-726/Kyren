@@ -50,18 +50,27 @@ export default function Onboarding() {
     const handleFinish = async () => {
         setSaving(true);
         try {
+            const educationLevelMap = {
+                "School (Class 8-10)": "high_school",
+                "School (Class 11-12)": "high_school",
+                "Undergraduate": "undergraduate",
+                "Postgraduate": "graduate",
+                "Self-taught": "other"
+            };
+            const mappedEducationLevel = educationLevelMap[data.educationLevel] || "other";
+
             await kyren.auth.updateMe({
                 full_name: data.name,
                 preferred_language: data.language,
-                input_preference: data.inputPreference,
-                education_level: data.educationLevel,
+                communication_mode: data.inputPreference,
+                education_level: mappedEducationLevel,
                 stem_interests: data.interests,
                 current_skill_level: data.skillLevel,
                 learning_goal: data.learningGoal,
                 onboarding_complete: true,
             });
             await checkUserAuth();
-            navigate("/dashboard");
+            navigate("/companion");
         } catch (e) {
             console.error("Onboarding save failed", e);
         } finally {

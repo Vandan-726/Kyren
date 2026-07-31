@@ -12,7 +12,9 @@
  */
 
 import bcrypt from "bcryptjs"
+import jwt from "jsonwebtoken"
 
+import { env } from "../config/env.js"
 import { supabase, unwrap } from "../config/supabase.js"
 import { verifyFirebaseIdToken } from "../config/firebase.js"
 import { badRequest, conflict, unauthorized, serviceUnavailable } from "../utils/errors.js"
@@ -297,4 +299,68 @@ export async function changePassword({ userId, currentPassword, newPassword }) {
   await revokeAllSessions(userId)
 
   return { success: true }
+}
+
+export async function forgotPassword({ email }) {
+  const normalized = normalizeEmail(email)
+  const user = await findUserByEmail(normalized)
+  
+  if (!user) {
+    return {
+      success: true,
+      message: "If an account exists with that email, a reset link has been generated."
+    }
+  }
+  
+  // Sign a secure reset token containing email (expires in 1 hour)
+  const token = jwt.sign(
+    { sub: user.id, email: normalized, purpose: "password_reset" },
+    env.jwt.accessSecret,
+    { expiresIn: "1h", issuer: env.jwt.issuer, audience: "kyren-api" }
+  )
+  
+  return {
+    success: true,
+    message: "If an account exists with that email, a reset link has been generated.",
+    token, // Dev-friendly token returned directly in API
+  }
+}
+
+export async function resetPassword({ token, newPassword }) {
+  let decoded
+  try {
+    decoded = jwt.verify(token, env.jwt.accessSecret, {
+      issuer: env.jwt.issuer,
+      audience: "kyren-api",
+    })
+  } catch (err) {
+    throw badRequest("The reset link is invalid or has expired")
+  }
+  
+  if (decoded.purpose !== "password_reset") {
+    throw badRequest("Invalid token purpose")
+  }
+  
+  assertPasswordStrength(newPassword)
+  
+  const user = await findUserByEmail(decoded.email)
+  if (!user) {
+    throw badRequest("User not found")
+  }
+  
+  // Update the user's password
+  unwrap(
+    await supabase
+      .from("users")
+      .update({ password_hash: await bcrypt.hash(newPassword, BCRYPT_ROUNDS) })
+      .eq("id", user.id)
+      .select("id")
+      .single(),
+    "Updating password via reset",
+  )
+  
+  // Revoke all existing sessions for security
+  await revokeAllSessions(user.id)
+  
+  return { success: true, message: "Your password has been reset successfully" }
 }

@@ -103,7 +103,7 @@ export default function AppLayout() {
     const userName = user?.full_name || user?.email || "Student";
     const initials = userName.charAt(0).toUpperCase();
 
-    if (!user?.onboarding_complete && location.pathname !== "/account" && user?.role !== "admin") {
+    if (!user?.onboarding_completed && location.pathname !== "/account" && user?.role !== "admin") {
         return <Navigate to="/onboarding" replace />;
     }
 

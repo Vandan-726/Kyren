@@ -41,6 +41,9 @@ export const AuthProvider = ({ children }) => {
             setIsLoadingAuth(true);
             const currentUser = await kyren.auth.me();
             setUser(currentUser);
+            if (currentUser?.preferred_language) {
+                localStorage.setItem("kyren-language", currentUser.preferred_language);
+            }
             setIsAuthenticated(true);
             setIsLoadingAuth(false);
             setAuthChecked(true);

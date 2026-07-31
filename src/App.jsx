@@ -5,7 +5,7 @@ import { queryClientInstance } from '@/lib/query-client'
 import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-dom';
 import PageNotFound from './lib/PageNotFound';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
-import UserNotRegisteredError from '@/components/UserNotRegisteredError';
+import UserNotRegisteredError from './component/UserNotRegisteredError';
 import ScrollToTop from './component/ScrollToTop';
 import { ThemeProvider } from '@/lib/theme';
 import { AppDataProvider } from '@/lib/appData';
@@ -27,7 +27,7 @@ import TeacherDashboard from '@/pages/TeacherDashboard';
 import ParentPortal from '@/pages/ParentPortal';
 import InstitutionConsole from '@/pages/InstitutionConsole';
 import Review from '@/pages/Review';
-import Login from '@/pages/Login';
+import Login from '@/pages/login';
 import Register from '@/pages/Register';
 import ForgotPassword from '@/pages/ForgotPassword';
 import ResetPassword from '@/pages/ResetPassword';

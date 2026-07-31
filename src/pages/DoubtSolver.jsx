@@ -11,7 +11,14 @@ import {
 } from "lucide-react";
 import { solveDoubt } from "@/lib/aiAgents";
 import { getSkillById } from "@/lib/skillsGraph";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
+
+const SAMPLE_QUESTIONS = [
+    "How does a CPU work?",
+    "Explain Newton's laws of motion",
+    "What is the difference between DNA and RNA?"
+];
 
 export default function DoubtSolver() {
     const { user } = useAuth();
@@ -35,14 +42,13 @@ export default function DoubtSolver() {
     const loadConversation = async () => {
         try {
             let conv = await kyren.entities.Conversation.filter({
-                user_id: userId,
-                context_type: "doubt_solver",
-            }, "-created_date", 1);
+                conversation_type: "doubt_solver",
+            }, "-created_at");
 
             if (conv.length === 0) {
                 conv = await kyren.entities.Conversation.create({
                     user_id: userId,
-                    context_type: "doubt_solver",
+                    conversation_type: "doubt_solver",
                     title: "Doubt Solver",
                     detected_language: selectedLang,
                 });
@@ -57,7 +63,7 @@ export default function DoubtSolver() {
                 setMessages([welcome]);
             } else {
                 setConversation(conv[0]);
-                const msgs = await kyren.entities.Message.filter({ conversation_id: conv[0].id }, "created_date");
+                const msgs = await kyren.entities.Message.filter({ conversation_id: conv[0].id }, "created_at");
                 setMessages(msgs);
             }
         } catch (e) {
@@ -70,21 +76,26 @@ export default function DoubtSolver() {
         setLoading(true);
         setInput("");
 
-        const userMsg = await kyren.entities.Message.create({
-            conversation_id: conversation.id,
-            user_id: userId,
-            role: "student",
-            content: text,
-            detected_language: selectedLang,
-        });
-        setMessages(prev => [...prev, userMsg]);
-
         try {
+            const userMsg = await kyren.entities.Message.create({
+                conversation_id: conversation.id,
+                user_id: userId,
+                role: "user",
+                content: text,
+                detected_language: selectedLang,
+            });
+            setMessages(prev => [...prev, userMsg]);
             const result = await solveDoubt({ userMessage: text, language: selectedLang });
 
-            let responseText = `**Explanation:**\n${result.explanation}\n\n**Example:**\n${result.example}`;
-            if (result.mini_question) {
-                responseText += `\n\n**Try this:** ${result.mini_question}`;
+            let responseText = result.explanation;
+            if (!result.is_out_of_scope) {
+                responseText = `**Explanation:**\n${result.explanation}\n\n**Example:**\n${result.example}`;
+                if (result.mini_question) {
+                    responseText += `\n\n**Try this:** ${result.mini_question}`;
+                }
+            } else {
+                responseText = result.explanation || result.reasoning || result.followup_question || `I can only help with STEM questions.`;
+                responseText += `\n\n__OUT_OF_SCOPE__`;
             }
 
             const aiMsg = await kyren.entities.Message.create({
@@ -163,8 +174,8 @@ export default function DoubtSolver() {
     };
 
     return (
-        <div className="flex flex-col h-full min-h-screen">
-            <div className="border-b border-border bg-background/80 backdrop-blur-sm sticky top-0 z-10">
+        <div className="flex flex-col flex-1 h-full relative overflow-hidden">
+            <div className="border-b border-border bg-background/95 backdrop-blur-md shrink-0 z-50">
                 <div className="max-w-4xl mx-auto px-6 py-4 flex items-center gap-3">
                     <div className="w-10 h-10 rounded-xl bg-brand-black flex items-center justify-center">
                         <HelpCircle className="w-5 h-5 text-brand-black-foreground" />
@@ -177,37 +188,78 @@ export default function DoubtSolver() {
             </div>
 
             <div className="flex-1 flex flex-col max-w-4xl mx-auto w-full px-6 py-6 overflow-hidden">
-                <div className="flex-1 overflow-y-auto space-y-6 pb-4">
-                    {messages.map((msg, i) => (
+                <div className="flex-1 overflow-y-auto [&::-webkit-scrollbar]:hidden space-y-5 pb-4" style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}>
+                    {messages.map((msg, i) => {
+                        const roleStr = msg.role?.toLowerCase() || "";
+                        const isUser = roleStr === "user" || roleStr === "student";
+                        const isAi = !isUser;
+                        const userInitials = user?.full_name ? user.full_name.charAt(0).toUpperCase() : (user?.email ? user.email.charAt(0).toUpperCase() : "U");
+                        return (
                         <motion.div
                             key={msg.id || i}
                             initial={{ opacity: 0, y: 10 }}
                             animate={{ opacity: 1, y: 0 }}
-                            className={cn("flex gap-3", msg.role === "student" ? "justify-end" : "justify-start")}
+                            className={cn("flex w-full", isUser ? "justify-end" : "justify-start")}
                         >
-                            {msg.role === "ai" && (
-                                <div className="w-8 h-8 rounded-lg bg-brand-black flex items-center justify-center shrink-0">
-                                    <Bot className="w-4 h-4 text-brand-black-foreground" />
+                            <div className={cn("flex items-end gap-3 max-w-[88%]", isUser ? "flex-row-reverse" : "flex-row")}>
+                                <Avatar className="w-10 h-10 shrink-0 shadow-sm">
+                                    {isUser ? (
+                                        <AvatarFallback className="bg-brand-black text-primary font-bold text-sm">
+                                            {userInitials}
+                                        </AvatarFallback>
+                                    ) : (
+                                        <div className="w-full h-full bg-brand-black flex items-center justify-center rounded-full">
+                                            <Sparkles className="w-5 h-5 text-primary" />
+                                        </div>
+                                    )}
+                                </Avatar>
+
+                                <div className={cn(
+                                    "px-4 py-3 rounded-2xl shadow-sm relative group",
+                                    isUser
+                                        ? "bg-primary text-primary-foreground rounded-br-sm"
+                                        : "bg-card text-foreground border border-border/50 rounded-bl-sm"
+                                )}>
+                                    {isAi && (
+                                        <div className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-primary flex items-center gap-1.5">
+                                            <Sparkles className="w-3 h-3" /> KYREN AI
+                                        </div>
+                                    )}
+                                    <p className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content.replace("\\n\\n__OUT_OF_SCOPE__", "")}</p>
+                                    {msg.content?.includes("__OUT_OF_SCOPE__") && (
+                                        <div className="mt-3 flex flex-wrap gap-2">
+                                            {SAMPLE_QUESTIONS.map((s, idx) => (
+                                                <button
+                                                    key={idx}
+                                                    onClick={() => handleSend(s)}
+                                                    className="text-[11px] px-2.5 py-1 rounded-full border border-primary/20 bg-primary/5 hover:bg-primary/10 transition-colors text-primary font-medium"
+                                                >
+                                                    {s}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    )}
                                 </div>
-                            )}
-                            <div className={cn("max-w-[75%] px-4 py-3 rounded-2xl", msg.role === "student" ? "rounded-tr-sm bg-brand-black text-brand-black-foreground" : "rounded-tl-sm bg-muted text-foreground")}>
-                                <p className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content}</p>
                             </div>
-                            {msg.role === "student" && (
-                                <div className="w-8 h-8 rounded-lg bg-muted flex items-center justify-center shrink-0">
-                                    <UserIcon className="w-4 h-4 text-muted-foreground" />
-                                </div>
-                            )}
                         </motion.div>
-                    ))}
+                    )})}
 
                     {loading && (
-                        <div className="flex gap-3">
-                            <div className="w-8 h-8 rounded-lg bg-brand-black flex items-center justify-center shrink-0">
-                                <Bot className="w-4 h-4 text-brand-black-foreground" />
-                            </div>
-                            <div className="px-4 py-3 rounded-2xl rounded-tl-sm bg-muted">
-                                <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+                        <div className="flex w-full justify-start">
+                            <div className="flex items-end gap-3 max-w-[88%] flex-row">
+                                <Avatar className="w-10 h-10 shrink-0 shadow-sm">
+                                    <div className="w-full h-full bg-brand-black flex items-center justify-center rounded-full">
+                                        <Sparkles className="w-5 h-5 text-primary" />
+                                    </div>
+                                </Avatar>
+                                <div className="px-4 py-3 rounded-2xl shadow-sm bg-card text-foreground border border-border/50 rounded-bl-sm">
+                                    <div className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-primary flex items-center gap-1.5">
+                                        <Sparkles className="w-3 h-3" /> KYREN AI
+                                    </div>
+                                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                                        <Loader2 className="w-4 h-4 animate-spin" /> Thinking...
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     )}

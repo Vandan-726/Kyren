@@ -29,8 +29,9 @@ export function validate(schemas) {
 
       const result = schema.safeParse(req[key])
       if (!result.success) {
+        const errorMessages = result.error.issues.map((issue) => issue.message).join("; ")
         return next(
-          badRequest(`Invalid request ${key}`, flatten(result.error)),
+          badRequest(errorMessages || `Invalid request ${key}`, flatten(result.error)),
         )
       }
       req.valid[key] = result.data

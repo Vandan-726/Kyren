@@ -1,19 +1,11 @@
 /**
- * xAI (Grok) client.
+ * Unified AI (Gemini & Groq) client.
  *
- * A thin fetch wrapper rather than an SDK, because we need three things the
- * generic clients make awkward:
- *   1. Strict JSON output validated against a schema before it reaches a
- *      database write.
- *   2. Per-call usage rows in `ai_api_usage` for cost attribution.
- *   3. Retry with backoff on 429/5xx, but never on 4xx (a malformed prompt
- *      will fail identically no matter how many times we resend it).
- *
- * The module never throws at import time when the key is missing, so the app
- * boots and only AI endpoints report 503.
+ * Exposes a similar OpenAI-compatible chat endpoint. Uses Gemini or Groq based on
+ * configuration and environment variables.
  */
 
-import { env, isXaiConfigured } from "./env.js"
+import { env, isGroqConfigured, isGeminiConfigured } from "./env.js"
 import { notConfigured, serviceUnavailable } from "../utils/errors.js"
 import { recordUsage } from "../services/aiUsageService.js"
 import { getContextUserId } from "../lib/requestContext.js"
@@ -21,21 +13,24 @@ import { getContextUserId } from "../lib/requestContext.js"
 const MAX_ATTEMPTS = 3
 const RETRYABLE_STATUS = new Set([408, 409, 425, 429, 500, 502, 503, 504])
 
-/** Rough blended $/1M tokens for grok-3 class models, for cost attribution. */
-const COST_PER_MILLION = { prompt: 3, completion: 15 }
+/** Cost attribution estimates per million tokens. */
+const COST_PER_MILLION = {
+  groq: { prompt: 3.0, completion: 15.0 }, // Blend for llama-3.3-70b class
+  gemini: { prompt: 0.075, completion: 0.3 }, // Blend for gemini-2.5-flash
+}
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
-function estimateCost(usage) {
+function estimateCost(usage, provider) {
   if (!usage) return null
+  const rates = COST_PER_MILLION[provider] || COST_PER_MILLION.gemini
   const prompt = (usage.prompt_tokens ?? 0) / 1_000_000
   const completion = (usage.completion_tokens ?? 0) / 1_000_000
-  return Number((prompt * COST_PER_MILLION.prompt + completion * COST_PER_MILLION.completion).toFixed(6))
+  return Number((prompt * rates.prompt + completion * rates.completion).toFixed(6))
 }
 
 /**
- * Grok occasionally wraps JSON in prose or a markdown fence even when asked
- * not to. Recover the object rather than failing the whole generation.
+ * Recovers JSON wrapped in prose or markdown blocks.
  */
 function parseJsonLoosely(text) {
   const trimmed = String(text ?? "").trim()
@@ -43,7 +38,7 @@ function parseJsonLoosely(text) {
   try {
     return JSON.parse(trimmed)
   } catch {
-    // Fall through to fence/brace extraction.
+    // Fall through
   }
 
   const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i)
@@ -51,7 +46,7 @@ function parseJsonLoosely(text) {
     try {
       return JSON.parse(fenced[1].trim())
     } catch {
-      // Keep trying.
+      // Keep trying
     }
   }
 
@@ -61,7 +56,7 @@ function parseJsonLoosely(text) {
     try {
       return JSON.parse(trimmed.slice(first, last + 1))
     } catch {
-      // Give up below.
+      // Give up
     }
   }
 
@@ -69,19 +64,7 @@ function parseJsonLoosely(text) {
 }
 
 /**
- * Single chat completion against xAI.
- *
- * @param {object} options
- * @param {string} options.prompt            User message.
- * @param {string} [options.system]          System instruction.
- * @param {object} [options.schema]          JSON schema; enables structured output.
- * @param {string} [options.schemaName]      Name for the schema (xAI requires one).
- * @param {string} [options.requestType]     Label written to ai_api_usage.
- * @param {string} [options.userId]          Owner for usage attribution.
- * @param {boolean} [options.fast]           Use the cheaper/faster model.
- * @param {number} [options.temperature]
- * @param {number} [options.maxTokens]
- * @returns {Promise<object|string>} Parsed object when a schema is given, else text.
+ * Single chat completion request against either Gemini or Groq.
  */
 export async function chat({
   prompt,
@@ -94,15 +77,33 @@ export async function chat({
   temperature = 0.7,
   maxTokens = 8192,
 }) {
-  if (!isXaiConfigured()) {
-    throw notConfigured("xAI (Grok)", ["XAI_API_KEY"])
+  // Determine which provider to use
+  let activeProvider = env.ai.provider
+
+  // Auto-failover if the chosen provider isn't configured but the other is
+  if (activeProvider === "gemini" && !isGeminiConfigured() && isGroqConfigured()) {
+    activeProvider = "groq"
+  } else if (activeProvider === "groq" && !isGroqConfigured() && isGeminiConfigured()) {
+    activeProvider = "gemini"
   }
 
-  // Fall back to the ambient request context so agent code deep in a call chain
-  // still attributes its spend correctly without passing userId explicitly.
+  // Final check to make sure the active provider is configured
+  if (activeProvider === "gemini" && !isGeminiConfigured()) {
+    throw notConfigured("Gemini API", ["GEMINI_API_KEY"])
+  }
+  if (activeProvider === "groq" && !isGroqConfigured()) {
+    throw notConfigured("Groq API", ["GROQ_API_KEY"])
+  }
+
+  const isGemini = activeProvider === "gemini"
+  const apiKey = isGemini ? env.ai.geminiApiKey : env.ai.groqApiKey
+  const baseUrl = isGemini ? env.ai.geminiBaseUrl : env.ai.groqBaseUrl
+  const model = fast
+    ? (isGemini ? env.ai.geminiFastModel : env.ai.groqFastModel)
+    : (isGemini ? env.ai.geminiModel : env.ai.groqModel)
+
   const attributedUserId = userId ?? getContextUserId()
 
-  const model = fast ? env.xai.fastModel : env.xai.model
   const messages = []
   if (system) messages.push({ role: "system", content: system })
   messages.push({ role: "user", content: prompt })
@@ -120,17 +121,15 @@ export async function chat({
   let lastError
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
-    // A fresh AbortController per attempt; reusing one would abort instantly
-    // on retry because the signal stays tripped once fired.
     const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), env.xai.timeoutMs)
+    const timer = setTimeout(() => controller.abort(), env.ai.timeoutMs)
 
     try {
-      const response = await fetch(`${env.xai.baseUrl}/chat/completions`, {
+      const response = await fetch(`${baseUrl}/chat/completions`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${env.xai.apiKey}`,
+          Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify(body),
         signal: controller.signal,
@@ -138,7 +137,7 @@ export async function chat({
 
       if (!response.ok) {
         const detail = await response.text().catch(() => "")
-        const error = new Error(`xAI responded ${response.status}: ${detail.slice(0, 300)}`)
+        const error = new Error(`${isGemini ? "Gemini" : "Groq"} responded ${response.status}: ${detail.slice(0, 300)}`)
         error.status = response.status
         throw error
       }
@@ -147,23 +146,21 @@ export async function chat({
       const content = payload.choices?.[0]?.message?.content
 
       if (!content) {
-        throw new Error("xAI returned an empty completion")
+        throw new Error(`${isGemini ? "Gemini" : "Groq"} returned an empty completion`)
       }
 
       const elapsed = Date.now() - startedAt
 
-      // Usage logging must never break a successful generation, so it is
-      // fire-and-forget with its own error handling inside recordUsage.
       void recordUsage({
         userId: attributedUserId,
-        provider: "xai",
+        provider: activeProvider,
         endpoint: "/chat/completions",
         model,
         requestType,
         promptTokens: payload.usage?.prompt_tokens,
         completionTokens: payload.usage?.completion_tokens,
         totalTokens: payload.usage?.total_tokens,
-        costEstimate: estimateCost(payload.usage),
+        costEstimate: estimateCost(payload.usage, activeProvider),
         status: "success",
         processingTimeMs: elapsed,
       })
@@ -177,8 +174,6 @@ export async function chat({
 
       if (attempt === MAX_ATTEMPTS || !retryable) break
 
-      // Exponential backoff with jitter so concurrent workers hitting a 429
-      // do not synchronise into another burst.
       const backoff = 500 * 2 ** (attempt - 1)
       await sleep(backoff + Math.random() * 250)
     } finally {
@@ -190,7 +185,7 @@ export async function chat({
 
   void recordUsage({
     userId: attributedUserId,
-    provider: "xai",
+    provider: activeProvider,
     endpoint: "/chat/completions",
     model,
     requestType,
@@ -207,10 +202,7 @@ export async function chat({
   )
 }
 
-/** Convenience wrapper for schema-backed calls, for readable agent code. */
 export function chatJson(options) {
   if (!options.schema) throw new Error("chatJson requires a schema")
   return chat(options)
 }
-
-export { isXaiConfigured }

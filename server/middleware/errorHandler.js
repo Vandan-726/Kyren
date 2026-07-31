@@ -44,7 +44,9 @@ export function errorHandler(err, req, res, next) {
     res,
     err?.status && err.status < 500 ? err.status : 500,
     "internal_error",
-    "An unexpected error occurred. Please try again.",
-    env.isProduction ? undefined : { message: err?.message },
+    env.isProduction 
+      ? "An unexpected error occurred. Please try again." 
+      : `Internal Server Error: ${err?.message || "Unknown error"}\n${err?.stack || ""}`,
+    env.isProduction ? undefined : { message: err?.message, stack: err?.stack },
   )
 }

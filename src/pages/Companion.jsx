@@ -6,11 +6,14 @@ import { useAppData } from "@/lib/appData";
 import { kyren } from "@/api/kyrenClient";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { toast } from "sonner";
 import {
     Send, Mic, Sparkles, Brain, ArrowRight,
-    Loader2, Bot, User as UserIcon, Activity
+    Loader2, Bot, User as UserIcon, Activity,
+    Trash2, Plus, Edit2, Network, Target, History
 } from "lucide-react";
+import { createNotification } from "@/lib/notifications";
 import {
     detectLearningGaps,
     planLearningTasks,
@@ -19,7 +22,7 @@ import {
     getSkillById,
     getAllPrerequisites,
 } from "@/lib/skillsGraph";
-import { createNotification } from "@/lib/notifications";
+
 import { cn } from "@/lib/utils";
 
 const SAMPLE_STARTERS = [
@@ -32,46 +35,115 @@ const SAMPLE_STARTERS = [
 export default function Companion() {
     const navigate = useNavigate();
     const { user } = useAuth();
-    const { masteryScores, learningTasks, activityLogs, refreshTasks, refreshLogs, refreshGaps, refreshAll } = useAppData();
+    const { masteryScores, activityLogs, refreshAll } = useAppData();
     const [conversation, setConversation] = useState(null);
     const [messages, setMessages] = useState([]);
     const [input, setInput] = useState("");
     const [loading, setLoading] = useState(false);
-    const [detectedGaps, setDetectedGaps] = useState([]);
     const [showGapBanner, setShowGapBanner] = useState(false);
     const [recentLogs, setRecentLogs] = useState([]);
+    const [editingMsgIndex, setEditingMsgIndex] = useState(null);
+    const [editContent, setEditContent] = useState("");
     const messagesEndRef = useRef(null);
+    const loadConversationGuardRef = useRef(null);
     const userId = user?.id;
     const selectedLang = localStorage.getItem("kyren-language") || "en";
+    const storageKey = userId ? `kyren-companion-${userId}` : null;
+    const reviewKey = userId ? `kyren-review-plan-${userId}` : null;
 
-    // Load or create conversation
+    const mergeUniqueMessages = useCallback((messageList = []) => {
+        const seen = new Set();
+        return [...messageList]
+            .sort((left, right) => {
+                const leftTime = new Date(left.created_at || left.created_date || 0).getTime();
+                const rightTime = new Date(right.created_at || right.created_date || 0).getTime();
+                return leftTime - rightTime;
+            })
+            .filter((message, index) => {
+                const fallbackKey = `${message?.role || "unknown"}:${message?.content || ""}`;
+                const key = message?.id || fallbackKey;
+                if (seen.has(key)) return false;
+                seen.add(key);
+                return true;
+            });
+    }, []);
+
+    const persistConversationState = useCallback((conversationData, messageList) => {
+        if (!storageKey || !conversationData) return;
+        const payload = {
+            conversation: {
+                id: conversationData.id,
+                user_id: conversationData.user_id,
+                context_type: conversationData.context_type,
+                title: conversationData.title,
+                detected_language: conversationData.detected_language,
+            },
+            messages: (messageList || []).map((msg) => ({
+                id: msg.id,
+                role: msg.role,
+                content: msg.content,
+                created_at: msg.created_at || new Date().toISOString(),
+                linked_gap_ids: msg.linked_gap_ids || [],
+            })),
+        };
+        localStorage.setItem(storageKey, JSON.stringify(payload));
+    }, [storageKey]);
+
+    const persistReviewState = useCallback((payload) => {
+        if (!reviewKey || !payload) return;
+        localStorage.setItem(reviewKey, JSON.stringify(payload));
+    }, [reviewKey]);
+
     useEffect(() => {
         if (!userId) return;
+        if (loadConversationGuardRef.current === userId) return;
+        loadConversationGuardRef.current = userId;
         loadConversation();
     }, [userId]);
 
-    // Update recent logs
+    useEffect(() => {
+        if (conversation && messages.length > 0) {
+            persistConversationState(conversation, messages);
+        }
+    }, [conversation, messages, persistConversationState]);
+
     useEffect(() => {
         setRecentLogs(activityLogs.slice(0, 5));
     }, [activityLogs]);
 
+    const handleEditSend = async (index, newContent) => {
+        if (!newContent.trim()) return;
+        setEditingMsgIndex(null);
+        
+        const msgsToKeep = messages.slice(0, index);
+        const msgsToDelete = messages.slice(index);
+        
+        setMessages(msgsToKeep);
+        
+        for (const m of msgsToDelete) {
+            if (m.id) {
+                await kyren.entities.Message.delete(m.id).catch(() => {});
+            }
+        }
+        
+        handleSend(newContent);
+    };
+
     const loadConversation = async () => {
         try {
             let conv = await kyren.entities.Conversation.filter({
-                user_id: userId,
-                context_type: "companion",
-            }, "-created_date", 1);
+                conversation_type: "companion",
+            }, "-created_at");
+            console.log("DEBUG CONV:", conv);
 
             if (conv.length === 0) {
                 conv = await kyren.entities.Conversation.create({
                     user_id: userId,
-                    context_type: "companion",
+                    conversation_type: "companion",
                     title: "Learning Companion",
                     detected_language: selectedLang,
                 });
                 setConversation(conv);
-                setMessages([]);
-                // Welcome message
                 const welcome = await kyren.entities.Message.create({
                     conversation_id: conv.id,
                     user_id: userId,
@@ -82,8 +154,9 @@ export default function Companion() {
                 setMessages([welcome]);
             } else {
                 setConversation(conv[0]);
-                const msgs = await kyren.entities.Message.filter({ conversation_id: conv[0].id }, "created_date");
-                setMessages(msgs);
+                const msgs = await kyren.entities.Message.filter({ conversation_id: conv[0].id }, "created_at");
+                console.log("DEBUG LOAD MSGS:", msgs);
+                setMessages(mergeUniqueMessages(msgs));
             }
         } catch (e) {
             console.error("Failed to load conversation", e);
@@ -95,7 +168,6 @@ export default function Companion() {
     }, [messages]);
 
     const processGapsAndTasks = useCallback(async (gaps, userGoal) => {
-        // 1. Create LearningGap records
         const gapRecords = [];
         for (const gap of gaps) {
             const gapRecord = await kyren.entities.LearningGap.create({
@@ -108,42 +180,15 @@ export default function Companion() {
             });
             gapRecords.push(gapRecord);
         }
-        setDetectedGaps(gapRecords);
 
-        // Notify user of detected gaps
-        if (gapRecords.length > 0) {
-            await createNotification(userId, "gap_detected", "Learning Gaps Detected",
-                `KYREN found ${gapRecords.length} gap${gapRecords.length > 1 ? "s" : ""} in your knowledge. Your roadmap has been updated.`);
-        }
-
-        // 2. Get the full prerequisite chain for each detected gap
-        const allNeededSkills = new Set();
-        gaps.forEach((g) => {
-            allNeededSkills.add(g.skill_id);
-            const prereqs = getAllPrerequisites(g.skill_id);
-            prereqs.forEach((p) => allNeededSkills.add(p));
-        });
-
-        // Filter out already mastered skills
-        const missingSkills = Array.from(allNeededSkills).filter((skillId) => {
-            const score = masteryScores.find((m) => m.skill_id === skillId);
-            return !score || score.status !== "Mastered";
-        });
-
-        // 3. Use Task Planning Agent to create ordered tasks
         const taskPlan = await planLearningTasks({
             detectedGaps: gaps,
             masteryScores,
             userGoal,
         });
 
-        // 4. Determine old task ordering for comparison
         const oldTasks = await kyren.entities.LearningTask.filter({ user_id: userId }, "priority");
-        const oldOrder = oldTasks.map((t) => ({ id: t.id, title: t.title, priority: t.priority }));
-
-        // 5. Create or update LearningTask records
         const plannedTasks = taskPlan.tasks || [];
-        // Remove old detected/suggested tasks that aren't in the new plan
         const newSkillIds = plannedTasks.map((t) => t.skill_id);
         const toDelete = oldTasks.filter((t) =>
             (t.status === "Detected" || t.status === "Suggested") && !newSkillIds.includes(t.skill_id)
@@ -152,35 +197,18 @@ export default function Companion() {
             await kyren.entities.LearningTask.delete(t.id);
         }
 
-        // Create new tasks
         for (let i = 0; i < plannedTasks.length; i++) {
             const task = plannedTasks[i];
             const existing = oldTasks.find((t) => t.skill_id === task.skill_id);
             if (existing) {
-                // Update priority if changed
                 if (existing.priority !== task.priority) {
                     await kyren.entities.LearningTask.update(existing.id, {
                         priority: task.priority,
-                        title: task.title,
-                        description: task.description,
-                        reason: task.reason,
                         status: existing.status === "Detected" ? "Suggested" : existing.status,
                     });
-                    // Log reorder
-                    await kyren.entities.TaskActivityLog.create({
-                        user_id: userId,
-                        task_id: existing.id,
-                        task_title: existing.title,
-                        event_type: "reordered",
-                        before_state: `Priority ${existing.priority}`,
-                        after_state: `Priority ${task.priority}`,
-                        message: `${existing.title} moved from #${existing.priority} → #${task.priority}`,
-                    });
-                    await createNotification(userId, "task_reordered", "Roadmap Updated",
-                        `"${existing.title}" reprioritized from #${existing.priority} to #${task.priority} based on your learning gaps.`);
                 }
             } else {
-                const newTask = await kyren.entities.LearningTask.create({
+                await kyren.entities.LearningTask.create({
                     user_id: userId,
                     title: task.title,
                     description: task.description,
@@ -192,52 +220,37 @@ export default function Companion() {
                     estimated_time: task.estimated_time,
                     status: "Detected",
                 });
-                // Log creation
-                await kyren.entities.TaskActivityLog.create({
-                    user_id: userId,
-                    task_id: newTask.id,
-                    task_title: task.title,
-                    event_type: "gap_detected",
-                    after_state: `Priority ${task.priority}`,
-                    message: `New learning task detected: ${task.title}`,
-                });
             }
         }
 
-        // 6. Show toast notifications for visible feedback
-        if (toDelete.length > 0 || plannedTasks.length > 0) {
-            setShowGapBanner(true);
-            toast.success("Roadmap updated!", {
-                description: `${plannedTasks.length} tasks detected and ordered. Check your Learning Tasks.`,
-                duration: 5000,
-            });
-        }
-
-        // 7. Refresh data
+        setShowGapBanner(true);
         await refreshAll();
-    }, [userId, masteryScores, refreshAll]);
+    }, [refreshAll, masteryScores, userId]);
 
     const handleSend = async (text) => {
         if (!text.trim() || !conversation || loading) return;
         setLoading(true);
         setInput("");
-
-        // Save user message
-        const userMsg = await kyren.entities.Message.create({
-            conversation_id: conversation.id,
-            user_id: userId,
-            role: "student",
-            content: text,
-            detected_language: selectedLang,
-        });
-        setMessages((prev) => [...prev, userMsg]);
+        const conversationHistory = messages.slice(-6).map((msg) => ({
+            role: msg.role,
+            content: msg.content,
+        }));
 
         try {
-            // Run Learning Gap Agent
+            const userMsg = await kyren.entities.Message.create({
+                conversation_id: conversation.id,
+                user_id: userId,
+                role: "user",
+                content: text,
+                detected_language: selectedLang,
+            });
+            setMessages((prev) => mergeUniqueMessages([...prev, userMsg]));
+            
             const existingGaps = await kyren.entities.LearningGap.filter({ user_id: userId });
             const gapResult = await detectLearningGaps({
                 userMessage: text,
                 context: "AI Learning Companion conversation",
+                conversationHistory,
                 masteryScores,
                 existingGaps,
             });
@@ -247,21 +260,19 @@ export default function Companion() {
 
             if (gapResult.detected_gaps && gapResult.detected_gaps.length > 0) {
                 detectedNewGaps = gapResult.detected_gaps;
-
-                // If the agent wants to ask a follow-up, do that first
                 if (gapResult.should_ask_followup && gapResult.followup_question) {
-                    aiResponseText = `${gapResult.followup_question}\n\n_(I detected some potential gaps: ${gapResult.detected_gaps.map((g) => g.skill_name).join(", ")}. Let me confirm before building your path.)_`;
+                    aiResponseText = `${gapResult.followup_question}\n\nI can already see these likely gap areas: ${gapResult.detected_gaps.map((g) => g.skill_name).join(", ")}.`;
                 } else {
-                    // Process gaps and create tasks
-                    await processGapsAndTasks(gapResult.detected_gaps, text);
-                    aiResponseText = `I've analyzed what you told me and found ${gapResult.detected_gaps.length} learning gap(s) you need to address:\n\n${gapResult.detected_gaps.map((g, i) => `${i + 1}. **${g.skill_name}** (${g.severity})`).join("\n")}\n\n${gapResult.reasoning}\n\nI've built a prioritized learning path for you. Check your Learning Tasks, or click below to review and confirm your learning plan.`;
+                    processGapsAndTasks(gapResult.detected_gaps, text).catch(console.error);
+                    aiResponseText = `I've analyzed what you told me and found ${gapResult.detected_gaps.length} learning gap(s) you need to address:\n\n${gapResult.detected_gaps.map((g, i) => `${i + 1}. **${g.skill_name}** (${g.severity})`).join("\n")}\n\n${gapResult.reasoning}\n\nI'm building your prioritized learning path now.`;
                 }
             } else {
-                // No gaps detected — respond conversationally
-                aiResponseText = gapResult.reasoning || `Interesting! Tell me more about what you want to learn. What's your current comfort level with the basics?`;
+                aiResponseText = gapResult.reasoning || gapResult.followup_question || `Interesting! Tell me more about what you want to learn.`;
+                if (gapResult.is_out_of_scope) {
+                    aiResponseText += `\n\n__OUT_OF_SCOPE__`;
+                }
             }
 
-            // Save AI message
             const aiMsg = await kyren.entities.Message.create({
                 conversation_id: conversation.id,
                 user_id: userId,
@@ -270,108 +281,170 @@ export default function Companion() {
                 detected_language: selectedLang,
                 linked_gap_ids: detectedNewGaps.map((g) => g.skill_id),
             });
-            setMessages((prev) => [...prev, aiMsg]);
+            setMessages((prev) => mergeUniqueMessages([...prev, aiMsg]));
         } catch (err) {
             console.error("Companion error", err);
-            const isLimitError = err?.message?.toLowerCase().includes("limit");
-            const errorText = isLimitError
-                ? "I've reached the monthly AI usage limit for this plan. Please try again next month or contact support to upgrade. In the meantime, you can still browse your courses and review saved notes."
-                : "I'm having trouble processing that right now. Could you try again?";
-            const errorMsg = await kyren.entities.Message.create({
-                conversation_id: conversation.id,
-                user_id: userId,
-                role: "ai",
-                content: errorText,
-                detected_language: selectedLang,
-            });
-            setMessages((prev) => [...prev, errorMsg]);
-            toast.error(isLimitError ? "AI usage limit reached for this month." : "Something went wrong. Please try again.");
+            toast.error("Something went wrong.");
         } finally {
             setLoading(false);
         }
     };
 
     const handleMic = () => {
-        // Use browser Speech Recognition as a basic STT fallback
-        if (!("webkitSpeechRecognition" in window) && !("SpeechRecognition" in window)) {
-            toast.error("Voice input not supported in this browser. Please use text.");
-            return;
-        }
+        if (!("webkitSpeechRecognition" in window) && !("SpeechRecognition" in window)) return;
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         const recognition = new SpeechRecognition();
         recognition.lang = selectedLang === "en" ? "en-US" : selectedLang;
-        recognition.continuous = false;
-        recognition.interimResults = false;
-        toast.info("Listening... Speak now.");
-        recognition.onresult = (event) => {
-            const transcript = event.results[0][0].transcript;
-            setInput(transcript);
-        };
-        recognition.onerror = () => toast.error("Could not capture audio. Try again.");
+        recognition.onresult = (event) => setInput(event.results[0][0].transcript);
         recognition.start();
     };
 
+    const clearChat = async () => {
+        if (!conversation) return;
+        const msgs = await kyren.entities.Message.filter({ conversation_id: conversation.id });
+        for (const m of msgs) await kyren.entities.Message.delete(m.id).catch(() => {});
+        localStorage.removeItem(storageKey);
+        localStorage.removeItem(reviewKey);
+        
+        const welcome = await kyren.entities.Message.create({
+            conversation_id: conversation.id,
+            user_id: userId,
+            role: "ai",
+            content: `Hi! I'm KYREN, your AI learning companion. Tell me what you want to learn — and I'll find out what you already know and what you're missing. What's your learning goal?`,
+            detected_language: selectedLang,
+        });
+        setMessages([welcome]);
+        toast.success("Chat cleared.");
+    };
+
+    const userInitials = user?.full_name ? user.full_name.charAt(0).toUpperCase() : (user?.email ? user.email.charAt(0).toUpperCase() : "U");
+
+    const lastUserMsgIndex = messages.findLastIndex(m => {
+        const r = m.role?.toLowerCase() || "";
+        return r === "user" || r === "student";
+    });
+
     return (
-        <div className="flex flex-col h-full min-h-screen">
-            {/* Header */}
-            <div className="border-b border-border bg-background/80 backdrop-blur-sm sticky top-0 z-10">
-                <div className="max-w-4xl mx-auto px-6 py-4 flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-xl bg-brand-black flex items-center justify-center">
-                            <Sparkles className="w-5 h-5 text-primary" />
-                        </div>
-                        <div>
-                            <h1 className="font-semibold">AI Learning Companion</h1>
-                            <p className="text-xs text-muted-foreground">Tell me what you want to learn — I'll find what you don't know.</p>
-                        </div>
-                    </div>
-                    {detectedGaps.length > 0 && (
-                        <Button onClick={() => navigate("/confirmation")} size="sm" variant="primary">
-                            Review Learning Plan <ArrowRight className="w-3.5 h-3.5 ml-1" />
-                        </Button>
-                    )}
+        <div className="flex flex-col flex-1 h-full relative overflow-hidden">
+            <div className="flex shrink-0 items-center justify-between px-6 py-3 border-b border-border bg-background/95 backdrop-blur-md z-50">
+                <div className="flex items-center gap-3">
+                    <Sparkles className="w-4 h-4 text-primary" />
+                    <span className="font-semibold text-sm">Learning Companion</span>
+                </div>
+                <div className="flex items-center gap-1.5 sm:gap-2">
+                    <Button variant="ghost" size="sm" onClick={clearChat} className="h-8 gap-1.5 px-2 sm:px-3 text-destructive hover:text-destructive hover:bg-destructive/10">
+                        <Trash2 className="w-4 h-4 shrink-0" />
+                        <span className="hidden sm:inline whitespace-nowrap text-xs font-medium">Delete</span>
+                    </Button>
                 </div>
             </div>
 
-            <div className="flex-1 flex flex-col max-w-4xl mx-auto w-full px-6 py-6 overflow-hidden">
-                {/* Messages */}
-                <div className="flex-1 overflow-y-auto space-y-6 pb-4">
-                    {messages.map((msg, i) => (
+            <div className="flex-1 flex flex-col max-w-4xl mx-auto w-full px-6 py-4 overflow-hidden">
+                <div className="flex-1 overflow-y-auto space-y-5 pb-4">
+                    {messages.map((msg, i) => {
+                        const roleStr = msg.role?.toLowerCase() || "";
+                        const isUser = roleStr === "user" || roleStr === "student";
+                        const isAi = !isUser;
+                        const hasPlanTrigger = msg.linked_gap_ids?.length > 0 || msg.content?.includes("click below to review") || msg.content?.includes("prioritized learning path");
+                        
+                        return (
                         <motion.div
                             key={msg.id || i}
                             initial={{ opacity: 0, y: 10 }}
                             animate={{ opacity: 1, y: 0 }}
-                            className={cn("flex gap-3", msg.role === "student" ? "justify-end" : "justify-start")}
+                            className={cn("flex w-full", isUser ? "justify-end" : "justify-start")}
                         >
-                            {msg.role === "ai" && (
-                                <div className="w-8 h-8 rounded-lg bg-brand-black flex items-center justify-center shrink-0">
-                                    <Bot className="w-4 h-4 text-primary" />
+                            <div className={cn("flex items-end gap-3 max-w-[88%]", isUser ? "flex-row-reverse" : "flex-row")}>
+                                <Avatar className="w-10 h-10 shrink-0 shadow-sm">
+                                    {isUser ? (
+                                        <AvatarFallback className="bg-brand-black text-primary font-bold text-sm">
+                                            {userInitials}
+                                        </AvatarFallback>
+                                    ) : (
+                                        <div className="w-full h-full bg-brand-black flex items-center justify-center rounded-full">
+                                            <Sparkles className="w-5 h-5 text-primary" />
+                                        </div>
+                                    )}
+                                </Avatar>
+
+                                <div className={cn(
+                                    "px-4 py-3 rounded-2xl shadow-sm relative group",
+                                    isUser
+                                        ? "bg-primary text-primary-foreground rounded-br-sm"
+                                        : "bg-card text-foreground border border-border/50 rounded-bl-sm"
+                                )}>
+                                    {isUser && i === lastUserMsgIndex && editingMsgIndex !== i && (
+                                        <div className="absolute top-1 -left-8 opacity-0 group-hover:opacity-100 transition-opacity">
+                                            <button 
+                                                onClick={() => { setEditingMsgIndex(i); setEditContent(msg.content); }} 
+                                                className="p-1.5 bg-muted rounded-full text-muted-foreground hover:text-foreground shadow-sm"
+                                                title="Edit prompt"
+                                            >
+                                                <Edit2 className="w-3 h-3" />
+                                            </button>
+                                        </div>
+                                    )}
+                                    {editingMsgIndex === i ? (
+                                        <div className="flex flex-col gap-2 min-w-[200px] sm:min-w-[300px]">
+                                            <Textarea
+                                                value={editContent}
+                                                onChange={(e) => setEditContent(e.target.value)}
+                                                className="text-sm min-h-[60px] text-foreground bg-background"
+                                                autoFocus
+                                            />
+                                            <div className="flex justify-end gap-2 mt-1">
+                                                <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setEditingMsgIndex(null)}>Cancel</Button>
+                                                <Button size="sm" className="h-7 text-xs" onClick={() => handleEditSend(i, editContent)}>Send</Button>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <>
+                                            {isAi && (
+                                                <div className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-primary flex items-center gap-1.5">
+                                                    <Sparkles className="w-3 h-3" /> KYREN AI
+                                                </div>
+                                            )}
+                                            <p className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content.replace("\\n\\n__OUT_OF_SCOPE__", "")}</p>
+                                        </>
+                                    )}
+                                    {msg.content?.includes("__OUT_OF_SCOPE__") && (
+                                        <div className="mt-3 flex flex-wrap gap-2">
+                                            {SAMPLE_STARTERS.map((s, idx) => (
+                                                <button
+                                                    key={idx}
+                                                    onClick={() => handleSend(s)}
+                                                    className="text-[11px] px-2.5 py-1 rounded-full border border-primary/20 bg-primary/5 hover:bg-primary/10 transition-colors text-primary font-medium"
+                                                >
+                                                    {s}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    )}
+                                    {msg.linked_gap_ids && msg.linked_gap_ids.length > 0 && (
+                                        <div className="mt-3 flex flex-wrap gap-1.5">
+                                            {msg.linked_gap_ids.map((gid) => (
+                                                <span key={gid} className="text-xs px-2.5 py-1 rounded-full bg-amber-500/10 text-amber-600 font-medium flex items-center gap-1">
+                                                    <Target className="w-3.5 h-3.5" /> Gap: {gid}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    )}
+                                    {isAi && hasPlanTrigger && (
+                                        <div className="mt-4 flex justify-end">
+                                            <Button
+                                                onClick={() => navigate("/learning-plan?view=roadmap")}
+                                                size="sm"
+                                                className="rounded-full bg-primary text-primary-foreground shadow-md hover:shadow-lg transition-all"
+                                            >
+                                                <Network className="w-3.5 h-3.5 mr-2" />
+                                                View Learning Roadmap
+                                            </Button>
+                                        </div>
+                                    )}
                                 </div>
-                            )}
-                            <div className={cn(
-                                "max-w-[75%] px-4 py-3 rounded-2xl",
-                                msg.role === "student"
-                                    ? "rounded-tr-sm bg-brand-black text-brand-black-foreground"
-                                    : "rounded-tl-sm bg-muted text-foreground"
-                            )}>
-                                <p className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content}</p>
-                                {msg.linked_gap_ids && msg.linked_gap_ids.length > 0 && (
-                                    <div className="mt-2 flex flex-wrap gap-1.5">
-                                        {msg.linked_gap_ids.map((gid) => (
-                                            <span key={gid} className="text-xs px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-500 flex items-center gap-1">
-                                                <Brain className="w-3 h-3" /> Gap: {gid}
-                                            </span>
-                                        ))}
-                                    </div>
-                                )}
                             </div>
-                            {msg.role === "student" && (
-                                <div className="w-8 h-8 rounded-lg bg-muted flex items-center justify-center shrink-0">
-                                    <UserIcon className="w-4 h-4 text-muted-foreground" />
-                                </div>
-                            )}
                         </motion.div>
-                    ))}
+                    )})}
 
                     {loading && (
                         <div className="flex gap-3">

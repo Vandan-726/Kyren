@@ -102,6 +102,35 @@ router.post(
   }),
 )
 
+router.post(
+  "/forgot-password",
+  authLimiter,
+  validate({
+    body: z.object({
+      email: emailSchema,
+    }),
+  }),
+  asyncHandler(async (req, res) => {
+    const result = await authService.forgotPassword(req.valid.body)
+    return ok(res, result)
+  }),
+)
+
+router.post(
+  "/reset-password",
+  authLimiter,
+  validate({
+    body: z.object({
+      token: z.string().min(1, "Reset token is required"),
+      newPassword: z.string().min(8, "Password must be at least 8 characters").max(200),
+    }),
+  }),
+  asyncHandler(async (req, res) => {
+    const result = await authService.resetPassword(req.valid.body)
+    return ok(res, result)
+  }),
+)
+
 /** Reports which auth methods this deployment can actually serve. */
 router.get(
   "/providers",

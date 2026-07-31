@@ -211,14 +211,13 @@ export default function LessonDetail() {
 
         // Get or create tutor conversation
         let conv = await kyren.entities.Conversation.filter({
-            user_id: userId,
-            context_type: "tutor",
+            conversation_type: "tutor",
             context_ref_id: lessonId,
-        }, "-created_date", 1);
+        }, "-created_at");
         if (conv.length === 0) {
             conv = await kyren.entities.Conversation.create({
                 user_id: userId,
-                context_type: "tutor",
+                conversation_type: "tutor",
                 context_ref_id: lessonId,
                 title: `Tutor: ${lesson.title}`,
             });

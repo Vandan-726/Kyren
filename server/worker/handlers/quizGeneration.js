@@ -1,12 +1,11 @@
 import { supabase, unwrap } from "../../config/supabase.js"
 import { registerHandler } from "../registry.js"
+import { env } from "../../config/env.js"
+import { generateQuiz } from "../../services/agents.js"
 
 /**
  * Generates a summative quiz for a lesson based on its learning objectives
  * and key concepts.
- *
- * TODO: When XAI_API_KEY is available, call the generateQuiz agent.
- * For now, creates placeholder quiz questions.
  *
  * Input:
  * - lessonId: UUID of the lesson
@@ -18,37 +17,57 @@ import { registerHandler } from "../registry.js"
  */
 export async function handleQuizGeneration(job) {
   const { payload } = job
-  const { lessonId, questionCount = 3 } = payload
+  const { lessonId, questionCount = 5 } = payload
 
   if (!lessonId) {
     throw new Error("quizGeneration requires lessonId in payload")
   }
 
-  // 1. Load the lesson.
-  const lesson = unwrap(
+  // 1. Load the lesson, module, and course details.
+  const lessonDetail = unwrap(
     await supabase
       .from("lessons")
-      .select("id, title, learning_objective, key_concepts, content_markdown, module_id")
+      .select(`
+        id,
+        title,
+        learning_objective,
+        key_concepts,
+        content_markdown,
+        module_id,
+        course_modules (
+          title,
+          courses (
+            title,
+            difficulty_level
+          )
+        )
+      `)
       .eq("id", lessonId)
       .single(),
-    "Loading lesson",
+    "Loading lesson details for quiz generation",
   )
 
-  // 2. Placeholder: create stub quiz questions. Real generation happens when key is available.
-  const quizContent = {
-    title: `${lesson.title} Quiz`,
-    description: `Test your knowledge of ${lesson.title}`,
-    passingScore: 70,
-    timeLimit: 15,
-    questions: Array.from({ length: Math.min(questionCount, 5) }, (_, i) => ({
-      text: `Question ${i + 1}: What is the definition of ${lesson.title}?`,
-      type: "multiple_choice",
-      difficulty: "medium",
-      bloomLevel: "comprehension",
-      options: [`Correct answer`, "Wrong option 1", "Wrong option 2", "Wrong option 3"],
-      correctAnswer: 0,
-      explanation: "This is the correct answer because...",
-    })),
+  const courseTitle = lessonDetail.course_modules?.courses?.title || ""
+  const moduleTitle = lessonDetail.course_modules?.title || ""
+  const difficulty = lessonDetail.course_modules?.courses?.difficulty_level || "medium"
+
+  // 2. Call the Quiz Agent to generate a summative quiz.
+  const quizRes = await generateQuiz({
+    lesson: {
+      title: lessonDetail.title,
+      description: lessonDetail.learning_objective || "",
+      ai_summary: lessonDetail.content_markdown || "",
+      key_concepts: lessonDetail.key_concepts || [],
+    },
+    courseTitle,
+    moduleTitle,
+    difficulty,
+    numQuestions: questionCount,
+  })
+
+  const quizContent = quizRes
+  if (!quizContent?.questions?.length) {
+    throw new Error("Quiz agent returned an empty response.")
   }
 
   // 3. Create the quiz record.
@@ -58,13 +77,13 @@ export async function handleQuizGeneration(job) {
       .insert({
         lesson_id: lessonId,
         quiz_type: "summative",
-        title: quizContent.title,
-        description: quizContent.description,
-        passing_score: quizContent.passingScore || 70,
-        time_limit_minutes: quizContent.timeLimit || 30,
+        title: quizContent.title || `${lessonDetail.title} Summative Quiz`,
+        description: quizContent.description || `Test your knowledge of ${lessonDetail.title}`,
+        passing_score: 70,
+        time_limit_minutes: 30,
         randomize_questions: true,
         generated_by_ai: true,
-        ai_model_used: "grok",
+        ai_model_used: env.ai.provider,
       })
       .select("id")
       .single(),
@@ -72,25 +91,26 @@ export async function handleQuizGeneration(job) {
   )
 
   // 4. Insert the questions.
-  if (quizContent.questions && Array.isArray(quizContent.questions)) {
+  const questionsList = quizContent.questions || []
+  if (questionsList.length > 0) {
     await supabase.from("quiz_questions").insert(
-      quizContent.questions.map((q, i) => ({
+      questionsList.map((q, i) => ({
         quiz_id: quiz.id,
         question_number: i + 1,
-        question_text: q.text,
-        question_type: q.type || "multiple_choice",
+        question_text: q.question_text,
+        question_type: "multiple_choice",
         difficulty_level: q.difficulty || "medium",
-        bloom_level: q.bloomLevel,
-        options: q.options,
-        correct_answer: q.correctAnswer,
-        explanation: q.explanation,
+        bloom_level: "comprehension",
+        options: q.options || [],
+        correct_answer: q.correct_answer,
+        explanation: "",
       })),
     )
   }
 
   return {
     quizId: quiz.id,
-    questionsCount: quizContent.questions?.length || 0,
+    questionsCount: questionsList.length,
   }
 }
 

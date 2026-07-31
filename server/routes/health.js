@@ -11,7 +11,8 @@ import { Router } from "express"
 import { supabase } from "../config/supabase.js"
 import {
   env,
-  isXaiConfigured,
+  isGroqConfigured,
+  isGeminiConfigured,
   isSarvamConfigured,
   isFirebaseConfigured,
   isYoutubeConfigured,
@@ -54,7 +55,8 @@ router.get(
       database,
       databaseError,
       integrations: {
-        xai: isXaiConfigured(),
+        groq: isGroqConfigured(),
+        gemini: isGeminiConfigured(),
         sarvam: isSarvamConfigured(),
         firebaseGoogleAuth: isFirebaseConfigured(),
         youtube: isYoutubeConfigured(),

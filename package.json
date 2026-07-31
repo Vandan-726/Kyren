@@ -5,7 +5,7 @@
     "type": "module",
     "scripts": {
         "dev": "concurrently -k -n api,web -c cyan,magenta \"npm run dev:api\" \"vite\"",
-        "dev:api": "node --watch --env-file-if-exists=/vercel/share/.env.project --env-file-if-exists=.env.development.local server/index.js",
+        "dev:api": "node --watch --env-file-if-exists=/vercel/share/.env.project --env-file-if-exists=.env server/index.js",
         "start": "node server/index.js",
         "build": "vite build",
         "lint": "eslint . --quiet",

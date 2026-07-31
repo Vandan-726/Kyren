@@ -62,12 +62,17 @@ export const env = {
     issuer: "kyren",
   },
 
-  xai: {
-    apiKey: read("XAI_API_KEY"),
-    baseUrl: read("XAI_BASE_URL", "https://api.x.ai/v1"),
-    model: read("XAI_MODEL", "grok-3"),
-    fastModel: read("XAI_FAST_MODEL", "grok-3-mini"),
-    timeoutMs: readInt("XAI_TIMEOUT_MS", 120000),
+  ai: {
+    provider: read("AI_PROVIDER", "gemini"), // 'gemini' | 'groq'
+    groqApiKey: read("GROQ_API_KEY"),
+    groqBaseUrl: read("GROQ_BASE_URL", "https://api.groq.com/openai/v1"),
+    groqModel: read("GROQ_MODEL", "llama-3.3-70b-versatile"),
+    groqFastModel: read("GROQ_FAST_MODEL", "llama-3.1-8b-instant"),
+    geminiApiKey: read("GEMINI_API_KEY"),
+    geminiBaseUrl: read("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai"),
+    geminiModel: read("GEMINI_MODEL", "gemini-2.5-flash"),
+    geminiFastModel: read("GEMINI_FAST_MODEL", "gemini-2.5-flash"),
+    timeoutMs: readInt("AI_TIMEOUT_MS", 120000),
   },
 
   sarvam: {
@@ -109,8 +114,17 @@ export const env = {
   },
 }
 
-/** True when the xAI agents can actually run. */
-export const isXaiConfigured = () => Boolean(env.xai.apiKey)
+/** True when the Groq agent can run. */
+export const isGroqConfigured = () => Boolean(env.ai.groqApiKey)
+
+/** True when the Gemini agent can run. */
+export const isGeminiConfigured = () => Boolean(env.ai.geminiApiKey)
+
+/** True when either Groq or Gemini is configured. */
+export const isAiConfigured = () => {
+  if (env.ai.provider === "gemini") return isGeminiConfigured()
+  return isGroqConfigured()
+}
 
 /** True when Sarvam voice endpoints can actually run. */
 export const isSarvamConfigured = () => Boolean(env.sarvam.apiKey)

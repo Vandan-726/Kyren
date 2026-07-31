@@ -14,6 +14,22 @@ class EntityProxy {
     this.endpoint = endpoint
   }
 
+  async __fetch(url, options = {}) {
+    const token = localStorage.getItem("auth_token")
+    const headers = {
+      "Content-Type": "application/json",
+      ...options.headers,
+    }
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`
+    }
+    return fetch(url, {
+      ...options,
+      headers,
+      credentials: "include",
+    })
+  }
+
   async list(filter = {}, orderBy = null) {
     const query = new URLSearchParams()
     Object.entries(filter).forEach(([k, v]) => {
@@ -22,9 +38,15 @@ class EntityProxy {
     if (orderBy) query.append("orderBy", orderBy)
 
     const url = `${this.endpoint}?${query}`
-    const res = await fetch(url)
+    const res = await this.__fetch(url)
     if (!res.ok) throw new Error(`Failed to list ${this.endpoint}`)
-    return res.json()
+    const payload = await res.json()
+    if (payload) {
+      if (payload.data !== undefined) return payload.data;
+      if (payload.items !== undefined) return payload.items;
+      if (payload.results !== undefined) return payload.results;
+    }
+    return payload;
   }
 
   async filter(filter = {}, orderBy = null) {
@@ -32,34 +54,45 @@ class EntityProxy {
   }
 
   async get(id) {
-    const res = await fetch(`${this.endpoint}/${id}`)
+    const res = await this.__fetch(`${this.endpoint}/${id}`)
     if (!res.ok) throw new Error(`Failed to get ${this.endpoint}/${id}`)
-    return res.json()
+    const payload = await res.json()
+    if (payload) {
+      if (payload.data !== undefined) return payload.data;
+      if (payload.item !== undefined) return payload.item;
+      if (payload.items !== undefined) return payload.items;
+      if (payload.results !== undefined) return payload.results;
+    }
+    return payload;
   }
 
   async create(data) {
-    const res = await fetch(this.endpoint, {
+    const res = await this.__fetch(this.endpoint, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(data),
-      credentials: "include",
     })
     if (!res.ok) {
-      const err = await res.json()
+      const err = await res.json().catch(() => ({}))
       throw new Error(err.error?.message || "Failed to create")
     }
-    return res.json()
+    const payload = await res.json()
+    if (payload) {
+      if (payload.data !== undefined) return payload.data;
+      if (payload.item !== undefined) return payload.item;
+      if (payload.items !== undefined) return payload.items;
+      if (payload.results !== undefined) return payload.results;
+    }
+    return payload;
   }
 
   async update(id, data) {
-    const res = await fetch(`${this.endpoint}/${id}`, {
+    const res = await this.__fetch(`${this.endpoint}/${id}`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(data),
-      credentials: "include",
     })
     if (!res.ok) throw new Error(`Failed to update ${this.endpoint}/${id}`)
-    return res.json()
+    const payload = await res.json()
+    return payload && payload.data !== undefined ? payload.data : payload
   }
 
   async bulkUpdate(items) {
@@ -70,13 +103,29 @@ class EntityProxy {
     return results
   }
 
+  async bulkCreate(items) {
+    const results = []
+    for (const item of items) {
+      results.push(await this.create(item))
+    }
+    return results
+  }
+
   async delete(id) {
-    const res = await fetch(`${this.endpoint}/${id}`, {
+    const res = await this.__fetch(`${this.endpoint}/${id}`, {
       method: "DELETE",
-      credentials: "include",
     })
     if (!res.ok) throw new Error(`Failed to delete ${this.endpoint}/${id}`)
-    return res.ok
+    const payload = await res.json().catch(() => ({}))
+    return payload && payload.success && payload.data !== undefined ? payload.data : res.ok
+  }
+
+  subscribe(callback) {
+    // Standard mock polling to simulate real-time database changes over HTTP
+    const interval = setInterval(() => {
+      callback()
+    }, 5000)
+    return () => clearInterval(interval)
   }
 }
 
@@ -141,8 +190,33 @@ class KyrenClient {
         }
         return data
       },
-      loginWithProvider: (provider, returnTo) => {
-        console.warn("loginWithProvider not implemented natively")
+      loginWithProvider: async (provider, returnTo) => {
+        if (provider !== "google") {
+          throw new Error("Only Google provider is supported");
+        }
+        
+        const { auth, signInWithPopup, GoogleAuthProvider } = await import("@/lib/firebaseClient");
+        if (!auth) {
+          throw new Error(
+            "Google sign-in is not configured. Please set the following variables in your .env file:\n" +
+            "VITE_FIREBASE_API_KEY, VITE_FIREBASE_AUTH_DOMAIN, VITE_FIREBASE_PROJECT_ID, VITE_FIREBASE_APP_ID"
+          );
+        }
+        
+        const providerInstance = new GoogleAuthProvider();
+        const result = await signInWithPopup(auth, providerInstance);
+        const idToken = await result.user.getIdToken();
+        
+        const data = await kyren.request("/auth/google", {
+          method: "POST",
+          body: JSON.stringify({ idToken }),
+        });
+        
+        if (data.accessToken) {
+          kyren.setAuthToken(data.accessToken);
+        }
+        
+        window.location.href = returnTo || "/";
       },
       register: async ({ email, password, fullName }) => {
         const data = await this.request("/auth/register", {
@@ -154,14 +228,21 @@ class KyrenClient {
         }
         return data
       },
-      verifyOtp: async ({ email, otpCode }) => {
-        return { access_token: "mock-token" }
-      },
-      resendOtp: async (email) => {
-        return { success: true }
+      resetPasswordRequest: async (email) => {
+        const data = await this.request("/auth/forgot-password", {
+          method: "POST",
+          body: JSON.stringify({ email }),
+        });
+        if (data.token) {
+          localStorage.setItem("dev_reset_token", data.token);
+        }
+        return data;
       },
       resetPassword: async ({ resetToken, newPassword }) => {
-        return { success: true }
+        return this.request("/auth/reset-password", {
+          method: "POST",
+          body: JSON.stringify({ token: resetToken, newPassword }),
+        });
       },
       updateMe: async (data) => {
         const token = this.getAuthToken()
@@ -250,15 +331,26 @@ class KyrenClient {
         const data = await this.request("/auth/me", {
           headers,
         })
-        const user = data.user
-        const userId = user.id
-        if (userId) {
-          user.linked_student_ids = JSON.parse(localStorage.getItem(`linked_student_ids_${userId}`) || "[]")
-          user.stem_interests = JSON.parse(localStorage.getItem(`stem_interests_${userId}`) || "[]")
-          user.input_preference = JSON.parse(localStorage.getItem(`input_preference_${userId}`) || "null")
-          user.current_skill_level = JSON.parse(localStorage.getItem(`current_skill_level_${userId}`) || "null")
+        const user = data.user || {}
+
+        let profile = {}
+        try {
+          profile = await this.request("/users/me/profile", {
+            headers,
+          })
+        } catch (err) {
+          profile = {}
         }
-        return user
+
+        const mergedUser = { ...user, ...profile }
+        const userId = mergedUser.id
+        if (userId) {
+          mergedUser.linked_student_ids = JSON.parse(localStorage.getItem(`linked_student_ids_${userId}`) || "[]")
+          mergedUser.stem_interests = JSON.parse(localStorage.getItem(`stem_interests_${userId}`) || "[]")
+          mergedUser.input_preference = JSON.parse(localStorage.getItem(`input_preference_${userId}`) || "null")
+          mergedUser.current_skill_level = JSON.parse(localStorage.getItem(`current_skill_level_${userId}`) || "null")
+        }
+        return mergedUser
       },
       logout: async () => {
         const token = this.getAuthToken()
@@ -294,6 +386,19 @@ class KyrenClient {
     }
   }
 
+  async refreshSession() {
+    const data = await this.request("/auth/refresh", {
+      method: "POST",
+      _retry: true,
+    })
+
+    if (data.accessToken) {
+      this.setAuthToken(data.accessToken)
+    }
+
+    return data
+  }
+
   async request(endpoint, options = {}) {
     const url = `${this.baseUrl}${endpoint.startsWith("/") ? endpoint : "/" + endpoint}`
     const res = await fetch(url, {
@@ -306,11 +411,31 @@ class KyrenClient {
     })
 
     if (!res.ok) {
-      const data = await res.json().catch(() => ({}))
-      throw new Error(data.error?.message || `HTTP ${res.status}`)
+      const errorData = await res.json().catch(() => ({}))
+      const err = new Error(errorData.error?.message || `HTTP ${res.status}`)
+      err.status = res.status
+      err.payload = errorData
+
+      const isRefreshable = res.status === 401 && endpoint !== "/auth/refresh" && !options._retry
+      if (isRefreshable) {
+        try {
+          await this.refreshSession()
+          return this.request(endpoint, { ...options, _retry: true })
+        } catch (refreshError) {
+          this.clearAuth()
+          throw err
+        }
+      }
+
+      if (res.status === 401) {
+        this.clearAuth()
+      }
+
+      throw err
     }
 
-    return res.json()
+    const payload = await res.json()
+    return payload && payload.data !== undefined ? payload.data : payload
   }
 
   setAuthToken(token) {

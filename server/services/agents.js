@@ -7,16 +7,125 @@
 //   2. Usage/latency/cost logging is handled inside the xAI client itself
 //      (server/config/xai.js -> recordUsage), so every retry and failure is
 //      captured in ai_api_usage rather than only the happy path.
-import { chat } from "../config/xai.js";
+import { chat } from "../config/ai.js";
 import {
     SKILLS_GRAPH,
     SKILL_DEPENDENCIES,
     getSkillById,
     getAllPrerequisites,
+    getPrerequisiteChain,
     getMissingPrerequisites,
     getDirectPrerequisites,
     getDependentSkills,
 } from "../lib/skillsGraph.js";
+
+const LEARNING_TARGET_RULES = [
+    { skillId: "dsa", patterns: [/data structures?/i, /\bdsa\b/i, /algorithms?/i] },
+    { skillId: "oop", patterns: [/\boop\b/i, /object[- ]oriented/i, /\bclasses?\b/i, /\bobjects?\b/i, /inheritance/i, /polymorphism/i, /encapsulation/i] },
+    { skillId: "cpp_basics", patterns: [/\bc\+\+\b/i, /\bcpp\b/i] },
+    { skillId: "pointers", patterns: [/\bpointers?\b/i, /memory address/i, /address of/i] },
+    { skillId: "arrays", patterns: [/\barrays?\b/i, /indexed collection/i] },
+    { skillId: "functions", patterns: [/\bfunctions?\b/i, /recursion/i, /parameters?/i, /return value/i] },
+    { skillId: "loops", patterns: [/\bloops?\b/i, /\bfor loop\b/i, /\bwhile loop\b/i, /do-?while/i] },
+    { skillId: "conditions", patterns: [/\bif\b/i, /\belse\b/i, /\bswitch\b/i, /conditional/i] },
+    { skillId: "variables", patterns: [/\bvariables?\b/i, /data types?/i, /\bints?\b/i, /\bfloats?\b/i, /\bchars?\b/i] },
+    { skillId: "prog_fundamentals", patterns: [/programming/i, /programmer/i, /syntax/i, /compile/i, /compiler/i, /basics/i, /from scratch/i, /beginner/i] },
+    { skillId: "python_basics", patterns: [/\bpython\b/i] },
+    { skillId: "machine_learning", patterns: [/machine learning/i, /\bml\b/i] },
+    { skillId: "data_analysis", patterns: [/data analysis/i, /\bpandas\b/i, /\bnumpy\b/i] },
+];
+
+const TARGET_PRIORITY = [
+    "dsa",
+    "oop",
+    "cpp_basics",
+    "pointers",
+    "arrays",
+    "functions",
+    "loops",
+    "conditions",
+    "variables",
+    "python_basics",
+    "machine_learning",
+    "data_analysis",
+    "prog_fundamentals",
+];
+
+function normalizeConversationText(text) {
+    return String(text || "")
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
+function inferTargetsFromText(text) {
+    const combined = normalizeConversationText(text)
+    if (!combined) return []
+
+    const hits = []
+    for (const rule of LEARNING_TARGET_RULES) {
+        if (rule.patterns.some((pattern) => pattern.test(combined))) {
+            hits.push(rule.skillId)
+        }
+    }
+
+    for (const skillId of TARGET_PRIORITY) {
+        if (hits.includes(skillId)) {
+            return [skillId]
+        }
+    }
+
+    return [...new Set(hits)]
+}
+
+function buildHeuristicGaps(targetSkillIds, existingGaps = []) {
+    const existingKeys = new Set(
+        (existingGaps || []).map((gap) => String(gap.skill_id || gap.skill_name || gap.gap_title || "").toLowerCase()),
+    )
+
+    const gaps = []
+    const seen = new Set()
+    for (const targetSkillId of targetSkillIds) {
+        const chain = getPrerequisiteChain(targetSkillId)
+        if (!chain.length) continue
+
+        const explicitTarget = getSkillById(targetSkillId)
+        const orderedChain = chain.filter(Boolean)
+
+        orderedChain.forEach((skillId, index) => {
+            const skill = getSkillById(skillId)
+            if (!skill) return
+            const key = String(skill.id || skillId).toLowerCase()
+            const nameKey = String(skill.name || skill.skill_name || "").toLowerCase()
+            if (existingKeys.has(key) || existingKeys.has(nameKey) || seen.has(key) || seen.has(nameKey)) return
+
+            const isTarget = skillId === targetSkillId
+            const severity =
+                isTarget || index === 0
+                    ? "critical"
+                    : index <= 2
+                        ? "high"
+                        : "medium"
+
+            gaps.push({
+                title: skill.name,
+                skillArea: skill.subject_area || skill.skill_category || "general",
+                severity,
+                confidence: isTarget ? 95 : Math.max(70, 95 - index * 6),
+                reason: isTarget
+                    ? `The student explicitly mentioned wanting to learn ${skill.name}.`
+                    : `${skill.name} is a prerequisite for ${explicitTarget?.name || targetSkillId}.`,
+                prerequisites: getDirectPrerequisites(skillId),
+                skill_id: skillId,
+                skill_name: skill.name,
+            })
+
+            seen.add(key)
+            seen.add(nameKey)
+        })
+    }
+
+    return gaps
+}
 
 /**
  * Invokes Grok with a JSON schema and returns parsed structured output.
@@ -49,7 +158,40 @@ async function callLLM(
 
 // === 1. LEARNING GAP AGENT ===
 // Analyzes conversation/quiz/doubt input against the SkillDependency graph, outputs detected gaps.
-export async function detectLearningGaps({ userMessage, context, masteryScores, existingGaps }) {
+export async function detectLearningGaps({ userMessage, context, conversationHistory = [], masteryScores, existingGaps }) {
+    const combinedText = [
+        context,
+        userMessage,
+        ...conversationHistory,
+    ]
+        .map((entry) => {
+            if (typeof entry === "string") return entry
+            if (entry && typeof entry === "object") {
+                return `${entry.role || "message"}: ${entry.content || ""}`
+            }
+            return ""
+        })
+        .join("\n")
+
+    const targetSkills = inferTargetsFromText(combinedText)
+    const heuristicGaps = buildHeuristicGaps(targetSkills, existingGaps)
+
+    if (heuristicGaps.length > 0) {
+        const targetNames = targetSkills.map((skillId) => getSkillById(skillId)?.name || skillId).filter(Boolean)
+        const nextQuestion = targetSkills.includes("dsa")
+            ? "Have you studied any programming basics before, like variables, loops, or functions?"
+            : "Have you already studied the basics for this topic, or should I start from the fundamentals?"
+
+        return {
+            detected_gaps: heuristicGaps,
+            reasoning: targetNames.length
+                ? `You mentioned ${targetNames.join(", ")}. I mapped that to the prerequisite chain so we can build the right learning path.`
+                : "I detected the likely learning target from your message and mapped the prerequisites.",
+            should_ask_followup: conversationHistory.length === 0,
+            followup_question: conversationHistory.length === 0 ? nextQuestion : "",
+        }
+    }
+
     const skillsList = SKILLS_GRAPH.map(s => `- ${s.id}: ${s.name} (${s.subject_area}) — ${s.description}`).join("\n");
     const depsList = SKILL_DEPENDENCIES.map(d => `${getSkillById(d.skill_id)?.name} requires ${getSkillById(d.prerequisite_skill_id)?.name}`).join("\n");
     const masteryInfo = masteryScores?.map(m => `${m.skill_name}: ${m.percentage}% (${m.status})`).join("\n") || "No mastery data yet";
@@ -68,17 +210,25 @@ ${masteryInfo}
 
 Already-detected gaps: ${existingGapNames}
 
-Context: ${context || "AI Learning Companion conversation"}
+Context: ${typeof context === "string" ? context : "AI Learning Companion conversation"}
+Conversation history:
+${conversationHistory.length > 0 ? conversationHistory.map((msg) => `${msg.role}: ${msg.content}`).join("\n") : "None"}
 
 Student said: "${userMessage}"
 
 Analyze this statement and identify which skills the student is missing or needs to learn. Consider the prerequisite chain — if a student wants to learn DSA but doesn't know C, they need Variables, Conditions, Loops, Functions, Arrays, Pointers, C++, OOP before DSA.
+If the user is answering a follow-up question from the prior turn, use the conversation history to preserve the same learning goal.
+If the message is short, ambiguous, or phrased as a question, infer the most likely learning target instead of rejecting it.
+Do not say that no gaps can be detected when the user has clearly named a target skill.
+
+CRITICAL: If the student's message is entirely unrelated to STEM, education, or learning (e.g., asking about politics, pop culture, or unrelated tasks), set 'is_out_of_scope' to true. Provide a polite, professional refusal in 'reasoning', and set 'should_ask_followup' to true with a 'followup_question' offering help with STEM subjects instead. Return an empty array for 'detected_gaps'.
 
 Return a JSON object with:
 - detected_gaps: array of objects with skill_id, skill_name, severity ("critical" for prerequisites blocking a stated goal, "moderate" for gaps that should be filled, "minor" for nice-to-haves)
 - reasoning: brief explanation of why these gaps were detected
 - should_ask_followup: boolean — true if the agent should ask a clarifying question before generating the full path
-- followup_question: the clarifying question if should_ask_followup is true`;
+- followup_question: the clarifying question if should_ask_followup is true
+- is_out_of_scope: boolean — true if the request is completely unrelated to STEM/learning`;
 
     const schema = {
         type: "object",
@@ -97,6 +247,7 @@ Return a JSON object with:
             reasoning: { type: "string" },
             should_ask_followup: { type: "boolean" },
             followup_question: { type: "string" },
+            is_out_of_scope: { type: "boolean" },
         },
     };
 
@@ -494,7 +645,9 @@ Provide:
 
 If the question reveals a fundamental learning gap, set "potential_gap" to true and suggest what skill is missing.
 
-Return JSON with: explanation, example, mini_question, potential_gap (boolean), gap_skill (string if potential_gap is true).`;
+CRITICAL: If the question is entirely unrelated to STEM, education, or the learning platform (e.g., politics, unrelated general knowledge, personal advice), set 'is_out_of_scope' to true. Provide a polite, professional refusal in the 'explanation' field (e.g. "I am an AI Doubt Solver focused on STEM subjects. I cannot answer this question. Please ask me about math, science, or programming!"). Omit the example and mini_question.
+
+Return JSON with: explanation, example, mini_question, potential_gap (boolean), gap_skill (string if potential_gap is true), is_out_of_scope (boolean).`;
 
     const schema = {
         type: "object",
@@ -504,6 +657,7 @@ Return JSON with: explanation, example, mini_question, potential_gap (boolean), 
             mini_question: { type: "string" },
             potential_gap: { type: "boolean" },
             gap_skill: { type: "string" },
+            is_out_of_scope: { type: "boolean" },
         },
     };
 

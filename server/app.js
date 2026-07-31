@@ -32,6 +32,8 @@ export function createApp() {
 
   app.use(
     helmet({
+      // Allow sign-in popups (like Google Auth) to communicate back to the app
+      crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" },
       // The API serves JSON only, so a restrictive CSP here costs nothing.
       contentSecurityPolicy: {
         directives: { defaultSrc: ["'none'"], frameAncestors: ["'none'"] },

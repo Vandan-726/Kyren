@@ -10,8 +10,8 @@ export default function AITutor() {
     const tab = params.get("tab") || "plan";
 
     return (
-        <div>
-            <div className="sticky top-14 lg:top-0 z-20 bg-background/80 backdrop-blur-md px-6 md:px-10 pt-4 pb-3 border-b border-border/50">
+        <div className="flex flex-col h-full overflow-hidden">
+            <div className="shrink-0 z-20 bg-background/80 backdrop-blur-md px-6 md:px-10 pt-4 pb-3 border-b border-border/50">
                 <div className="flex gap-1 p-1 bg-muted rounded-full w-fit">
                     <button
                         onClick={() => setParams({ tab: "plan" })}
@@ -35,10 +35,10 @@ export default function AITutor() {
                     </button>
                 </div>
             </div>
-            <div style={{ display: tab === "plan" ? "block" : "none" }}>
+            <div className="flex-1 overflow-hidden" style={{ display: tab === "plan" ? "flex" : "none", flexDirection: "column" }}>
                 <Companion />
             </div>
-            <div style={{ display: tab === "ask" ? "block" : "none" }}>
+            <div className="flex-1 overflow-hidden" style={{ display: tab === "ask" ? "flex" : "none", flexDirection: "column" }}>
                 <DoubtSolver />
             </div>
         </div>

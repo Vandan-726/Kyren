@@ -32,8 +32,14 @@ export default function Login() {
         }
     };
 
-    const handleGoogle = () => {
-        kyren.auth.loginWithProvider("google", returnTo);
+    const handleGoogle = async () => {
+        setError("");
+        try {
+            await kyren.auth.loginWithProvider("google", returnTo);
+        } catch (err) {
+            console.error("Google login failed", err);
+            setError(err.message || "Google sign-in failed. Please try again.");
+        }
     };
 
     return (

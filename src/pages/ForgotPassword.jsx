@@ -17,8 +17,9 @@ export default function ForgotPassword() {
         setLoading(true);
         try {
             await kyren.auth.resetPasswordRequest(email);
-        } catch {
-            // Always show success regardless
+        } catch (err) {
+            // Always show success state for security, but log the error
+            console.error("Forgot password failed", err);
         } finally {
             setLoading(false);
             setSent(true);
@@ -37,9 +38,25 @@ export default function ForgotPassword() {
             }
         >
             {sent ? (
-                <p className="text-sm text-foreground text-center">
-                    If an account exists with that email, you'll receive a password reset link shortly.
-                </p>
+                <div className="space-y-4 text-center">
+                    <p className="text-sm text-foreground">
+                        If an account exists with that email, you'll receive a password reset link shortly.
+                    </p>
+                    {localStorage.getItem("dev_reset_token") && (
+                        <div className="p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-lg text-xs text-yellow-600 dark:text-yellow-400 space-y-2">
+                            <p><strong>Dev Note:</strong> Email sending is mocked. You can use the link below to test the reset:</p>
+                            <Link 
+                                to={`/reset-password?token=${localStorage.getItem("dev_reset_token")}`}
+                                className="block font-medium underline text-primary"
+                                onClick={() => {
+                                    // Keep it for the next page, or clear it on load of next page
+                                }}
+                            >
+                                Go to Reset Password Page
+                            </Link>
+                        </div>
+                    )}
+                </div>
             ) : (
                 <form onSubmit={handleSubmit} className="space-y-4">
                     <div className="space-y-2">

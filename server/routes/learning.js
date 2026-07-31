@@ -5,6 +5,8 @@ import { requireAuth } from "../middleware/auth.js"
 import { enqueueJob, getJobForUser, listJobsForUser } from "../services/jobQueue.js"
 import { ok, created } from "../utils/respond.js"
 import { notFound } from "../utils/errors.js"
+import { supabase, unwrap } from "../config/supabase.js"
+import { detectLearningGaps } from "../services/agents.js"
 
 const router = Router()
 
@@ -28,12 +30,97 @@ router.post(
       const { masteryScores = {} } = req.valid.body
       const userId = req.user.id
 
-      // TODO: call detectLearningGaps agent directly
-      // For now, just acknowledge the request with a placeholder.
+      // Retrieve existing gaps from database
+      const existingGapsRows = unwrap(
+        await supabase
+          .from("learning_gaps")
+          .select(`
+            id,
+            severity,
+            skills (
+              id,
+              skill_name
+            )
+          `)
+          .eq("user_id", userId),
+        "Loading existing gaps",
+      ) || []
+
+      const existingGaps = existingGapsRows.map(g => ({
+        skill_id: g.skills?.id,
+        skill_name: g.skills?.skill_name,
+        severity: g.severity
+      }))
+
+      // Convert masteryScores dict into list
+      const skillCodes = Object.keys(masteryScores)
+      let masteryList = []
+      if (skillCodes.length > 0) {
+        const skillsData = unwrap(
+          await supabase
+            .from("skills")
+            .select("id, skill_code, skill_name")
+            .in("skill_code", skillCodes),
+          "Resolving skills for mastery check"
+        ) || []
+
+        masteryList = skillsData.map(s => ({
+          skill_name: s.skill_name,
+          percentage: masteryScores[s.skill_code] ?? 0,
+          status: (masteryScores[s.skill_code] ?? 0) >= 80 ? "mastered" : "in_progress"
+        }))
+      }
+
+      // Invoke the agent
+      const gapResult = await detectLearningGaps({
+        userMessage: "Analyze my progress and check for gaps.",
+        context: "Progress dashboard review",
+        masteryScores: masteryList,
+        existingGaps
+      })
+
+      // Insert new gaps to the database
+      const detectedGaps = gapResult.detected_gaps || []
+      const createdGaps = []
+      for (const gap of detectedGaps) {
+        const { data: skill } = await supabase
+          .from("skills")
+          .select("id, skill_name, skill_category")
+          .or(`id.eq.${gap.skill_id},skill_name.ilike.%${gap.skill_name || ""}%`)
+          .limit(1)
+          .maybeSingle()
+
+        if (skill) {
+          const alreadyExists = existingGapsRows.some(e => e.skills?.id === skill.id)
+          if (!alreadyExists) {
+            const gapRecord = unwrap(
+              await supabase
+                .from("learning_gaps")
+                .insert({
+                  user_id: userId,
+                  gap_title: `Missing skill: ${skill.skill_name}`,
+                  skill_area: skill.skill_category,
+                  skill_id: skill.id,
+                  severity: gap.severity || "medium",
+                  detected_from: "assessment",
+                  status: "detected",
+                })
+                .select("*")
+                .single(),
+              "Inserting detected gap"
+            )
+            createdGaps.push(gapRecord)
+          }
+        }
+      }
+
       ok(res, {
-        gaps: [
-          { skillCode: "dsa", reason: "Foundation for algorithms", priority: 1 },
-        ],
+        gaps: createdGaps.map(g => ({
+          skillCode: g.skill_id,
+          reason: gapResult.reasoning,
+          priority: g.severity === "critical" ? 1 : 2
+        })),
+        rawResult: gapResult
       })
     } catch (err) {
       next(err)

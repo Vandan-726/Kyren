@@ -1,6 +1,7 @@
-import admin from "firebase-admin"
+import { getApps, initializeApp, cert, getApp } from "firebase-admin/app"
+import { getAuth } from "firebase-admin/auth"
 
-import { env } from "./env.js"
+import { env, isFirebaseConfigured as checkConfig } from "./env.js"
 
 /**
  * Firebase Admin is used for exactly one job: verifying the Google ID token
@@ -19,17 +20,17 @@ let initError = null
 function initialize() {
   if (app || initError) return
 
-  if (!env.firebase.configured) {
+  if (!checkConfig()) {
     initError = new Error("Firebase Admin is not configured")
     return
   }
 
   try {
     // Reuse an existing app across serverless invocations / HMR reloads.
-    app = admin.apps.length
-      ? admin.app()
-      : admin.initializeApp({
-          credential: admin.credential.cert({
+    app = getApps().length
+      ? getApp()
+      : initializeApp({
+          credential: cert({
             projectId: env.firebase.projectId,
             clientEmail: env.firebase.clientEmail,
             privateKey: env.firebase.privateKey,
@@ -42,7 +43,7 @@ function initialize() {
 }
 
 export function isFirebaseConfigured() {
-  return env.firebase.configured
+  return checkConfig()
 }
 
 /**
@@ -65,5 +66,5 @@ export async function verifyFirebaseIdToken(idToken) {
 
   // checkRevoked: true means a disabled/deleted Firebase user cannot keep
   // trading a still-unexpired ID token for fresh KYREN sessions.
-  return admin.auth(app).verifyIdToken(idToken, true)
+  return getAuth(app).verifyIdToken(idToken, true)
 }

@@ -26,6 +26,7 @@ export default function ResetPassword() {
         setLoading(true);
         try {
             await kyren.auth.resetPassword({ resetToken, newPassword });
+            localStorage.removeItem("dev_reset_token");
             window.location.href = "/login";
         } catch (err) {
             setError(err.message || "Failed to reset password");

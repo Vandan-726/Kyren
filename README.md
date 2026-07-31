@@ -5,7 +5,7 @@ This repository contains the Kyren frontend (React + Vite) and backend (Node + E
 ## Prerequisites
 
 1. Install dependencies: `npm install`
-2. Configure local environment variables: copy `.env.example` to `.env.development.local` and add your credentials (e.g. Supabase, JWT Secrets, etc.).
+2. Configure local environment variables: copy `.env.example` to `.env` and add your credentials (e.g. Supabase, JWT Secrets, etc.).
 
 ## Running the Application Locally
 

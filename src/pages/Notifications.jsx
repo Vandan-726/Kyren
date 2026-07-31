@@ -5,6 +5,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Bell, Brain, Network, Sparkles, TrendingUp, ClipboardList, Flame, Zap, Mail, Users, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useNavigate } from "react-router-dom";
 
 const ICON_MAP = {
     gap_detected: Brain,
@@ -28,6 +29,7 @@ const TYPE_FILTERS = [
 
 export default function Notifications() {
     const { user } = useAuth();
+    const navigate = useNavigate();
     const [notifications, setNotifications] = useState([]);
     const [loading, setLoading] = useState(true);
     const [filter, setFilter] = useState("all");
@@ -70,6 +72,18 @@ export default function Notifications() {
             fetchAll();
         } catch (e) {
             /* silent */
+        }
+    };
+
+    const handleNotificationClick = (n) => {
+        if (!n.read) toggleRead(n);
+        try {
+            const payload = typeof n.payload === "string" ? JSON.parse(n.payload) : n.payload;
+            if (payload?.route) {
+                navigate(payload.route);
+            }
+        } catch (e) {
+            console.error("Failed to parse notification payload", e);
         }
     };
 
@@ -130,7 +144,7 @@ export default function Notifications() {
                             <Card
                                 key={n.id}
                                 className={cn("p-4 cursor-pointer hover:border-primary/20 transition", !n.read && "border-primary/20")}
-                                onClick={() => toggleRead(n)}
+                                onClick={() => handleNotificationClick(n)}
                             >
                                 <div className="flex gap-4">
                                     <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center shrink-0", !n.read ? "bg-primary/10" : "bg-muted/30")}>
