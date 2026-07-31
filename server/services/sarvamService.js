@@ -194,6 +194,40 @@ export async function speechToText(audioBuffer, { filename = "audio.webm", mimeT
 }
 
 /**
+ * Helper to concatenate multiple PCM WAV files.
+ * Keeps the header of the first file, concatenates the audio data sections (from offset 44),
+ * and updates the RIFF file size and WAV data subchunk size fields in the header.
+ */
+function mergeWavBuffers(buffers) {
+  if (!buffers || buffers.length === 0) return null
+  if (buffers.length === 1) return buffers[0]
+
+  const validBuffers = buffers.filter(buf => buf && buf.length >= 44)
+  if (validBuffers.length === 0) return null
+  if (validBuffers.length === 1) return validBuffers[0]
+
+  let totalDataSize = 0
+  for (const buf of validBuffers) {
+    totalDataSize += (buf.length - 44)
+  }
+
+  const merged = Buffer.alloc(44 + totalDataSize)
+  validBuffers[0].copy(merged, 0, 0, 44)
+
+  const totalFileSize = 36 + totalDataSize
+  merged.writeUInt32LE(totalFileSize, 4)
+  merged.writeUInt32LE(totalDataSize, 40)
+
+  let offset = 44
+  for (const buf of validBuffers) {
+    buf.copy(merged, offset, 44, buf.length)
+    offset += (buf.length - 44)
+  }
+
+  return merged
+}
+
+/**
  * Text-to-speech. Returns base64 WAV chunks in playback order.
  *
  * Long text is chunked and requested sequentially. Sequential rather than
@@ -222,7 +256,19 @@ export async function textToSpeech(text, { langCode = "en", speaker = null } = {
 
   if (!audios.length) throw serviceUnavailable("The voice service returned no audio")
 
-  return { audios, languageCode: targetLang, chunkCount: chunks.length }
+  // Convert base64 strings to Buffer chunks
+  const chunkBuffers = audios.map(b64 => Buffer.from(b64, "base64"))
+  
+  // Merge multiple WAV chunks into a single WAV buffer
+  const mergedWavBuffer = mergeWavBuffers(chunkBuffers)
+  const mergedBase64 = mergedWavBuffer ? mergedWavBuffer.toString("base64") : ""
+
+  return {
+    audio: mergedBase64,
+    audios,
+    languageCode: targetLang,
+    chunkCount: chunks.length
+  }
 }
 
 /**

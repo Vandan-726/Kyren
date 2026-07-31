@@ -15,7 +15,7 @@
   "crons": [
     {
       "path": "/api/jobs/drain",
-      "schedule": "* * * * *"
+      "schedule": "0 0 * * *"
     }
   ],
   "headers": [

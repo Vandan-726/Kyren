@@ -6,7 +6,7 @@ import { useAuth } from "@/lib/AuthContext";
 import { Button } from "@/components/ui/button";
 import {
     Lock, CheckCircle2, Loader2, Target, Sparkles,
-    Circle, X, Clock, TrendingUp, BookOpen
+    X, Clock, TrendingUp, BookOpen
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {

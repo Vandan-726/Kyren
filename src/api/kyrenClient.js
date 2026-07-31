@@ -409,13 +409,18 @@ class KyrenClient {
 
   async request(endpoint, options = {}) {
     const url = `${this.baseUrl}${endpoint.startsWith("/") ? endpoint : "/" + endpoint}`
+    const token = this.getAuthToken()
+    const headers = {
+      "Content-Type": "application/json",
+      ...options.headers,
+    }
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`
+    }
     const res = await fetch(url, {
       ...options,
       credentials: "include",
-      headers: {
-        "Content-Type": "application/json",
-        ...options.headers,
-      },
+      headers,
     })
 
     if (!res.ok) {
