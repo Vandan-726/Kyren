@@ -37,7 +37,7 @@ const upload = multer({
 })
 
 const languageCode = z.enum([
-  "en", "hi", "bn", "gu", "kn", "ml", "mr", "or", "pa", "ta", "te", "as",
+  "en", "hi", "bn", "gu", "kn", "ml", "mr", "or", "od", "pa", "ta", "te", "as",
 ])
 
 /** Advertises whether voice features are usable, so the UI can hide controls. */

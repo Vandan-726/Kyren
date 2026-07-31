@@ -438,6 +438,49 @@ class KyrenClient {
     return payload && payload.data !== undefined ? payload.data : payload
   }
 
+  async requestFormData(endpoint, formData, options = {}) {
+    const url = `${this.baseUrl}${endpoint.startsWith("/") ? endpoint : "/" + endpoint}`
+    const token = this.getAuthToken()
+    const headers = { ...options.headers }
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`
+    }
+
+    const res = await fetch(url, {
+      ...options,
+      method: options.method || "POST",
+      body: formData,
+      credentials: "include",
+      headers,
+    })
+
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => ({}))
+      const err = new Error(errorData.error?.message || `HTTP ${res.status}`)
+      err.status = res.status
+      err.payload = errorData
+
+      if (res.status === 401 && endpoint !== "/auth/refresh" && !options._retry) {
+        try {
+          await this.refreshSession()
+          return this.requestFormData(endpoint, formData, { ...options, _retry: true })
+        } catch (refreshError) {
+          this.clearAuth()
+          throw err
+        }
+      }
+
+      if (res.status === 401) {
+        this.clearAuth()
+      }
+
+      throw err
+    }
+
+    const payload = await res.json()
+    return payload && payload.data !== undefined ? payload.data : payload
+  }
+
   setAuthToken(token) {
     if (token) localStorage.setItem("auth_token", token)
   }
