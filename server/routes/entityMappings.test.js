@@ -54,6 +54,8 @@ test("translates filters and ordering for conversation entities", () => {
   assert.equal(mapFilterKey("Conversation", "context_type"), "conversation_type")
   assert.equal(mapFilterKey("Conversation", "context_ref_id"), "subject_area")
   assert.equal(mapOrderField("Conversation", "created_date"), "created_at")
+  assert.equal(mapOrderField("TaskActivityLog", "created_date"), "created_date")
+  assert.equal(mapFilterKey("TaskActivityLog", "created_date"), "created_date")
 })
 
 test("drops unsupported skill_name when mapping LearningTask payloads to backend", () => {
@@ -86,4 +88,18 @@ test("translates backend rows back to the frontend shape", () => {
   assert.equal(frontend.context_type, "tutor")
   assert.equal(frontend.context_ref_id, "lesson-123")
   assert.equal(frontend.detected_language, "en")
+})
+
+test("maps Course payloads to the courses schema", () => {
+  const backend = mapEntityDataToBackend("Course", {
+    title: "Intro to AI",
+    difficulty: "beginner",
+    estimated_duration: "2 hours",
+    learning_objectives: ["a", "b"],
+  })
+
+  assert.equal(backend.difficulty_level, "beginner")
+  assert.equal(backend.difficulty, undefined)
+  assert.equal(backend.estimated_duration_hours, 2)
+  assert.equal(backend.learning_objectives, undefined)
 })

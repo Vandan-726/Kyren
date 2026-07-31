@@ -3,7 +3,7 @@ import { useAppData } from "@/lib/appData";
 import { getSkillById } from "@/lib/skillsGraph";
 import {
     RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
-    Radar, ResponsiveContainer, Tooltip
+    Radar, BarChart, Bar, XAxis, YAxis, Cell, ResponsiveContainer, Tooltip
 } from "recharts";
 import { Card } from "@/components/ui/card";
 import { Target, ChevronDown } from "lucide-react";
@@ -14,6 +14,8 @@ const MASTERY_COLORS = {
     mid: "#E34A32",  // >= 50 Improving
     low: "#F59E0B",  // < 50 Needs Review
 };
+
+const BAR_COLORS = ["#E34A32", "#22C55E", "#F59E0B", "#A78BFA", "#6C9EFF"];
 
 function getMasteryColor(pct) {
     if (pct >= 80) return MASTERY_COLORS.high;
@@ -36,7 +38,19 @@ export default function SubjectMasteryTracker() {
         const bySubject = {};
         masteryScores.forEach((score) => {
             const skill = getSkillById(score.skill_id);
-            const subject = skill?.subject_area || "Other";
+            let subject = score.subject_area || skill?.subject_area;
+            if (!subject || subject === "Other") {
+                const name = (score.skill_name || skill?.name || "").toLowerCase();
+                if (name.includes("python") || name.includes("code") || name.includes("program") || name.includes("java") || name.includes("variable") || name.includes("computer")) {
+                    subject = "Computer Science";
+                } else if (name.includes("math") || name.includes("algebra") || name.includes("calc")) {
+                    subject = "Mathematics";
+                } else if (name.includes("science") || name.includes("physics") || name.includes("chem")) {
+                    subject = "Science";
+                } else {
+                    subject = score.skill_name || skill?.name || "General Knowledge";
+                }
+            }
             if (!bySubject[subject]) {
                 bySubject[subject] = { name: subject, skills: [], total: 0 };
             }
@@ -79,47 +93,60 @@ export default function SubjectMasteryTracker() {
             </div>
 
             {hasData ? (
-                <div className="grid lg:grid-cols-2 gap-6">
-                    {/* Interactive Radar Chart */}
+                <div className="grid lg:grid-cols-2 gap-6 items-center">
+                    {/* Interactive Chart */}
                     <div>
                         <ResponsiveContainer width="100%" height={300}>
-                            <RadarChart data={subjectData} outerRadius="72%">
-                                <PolarGrid stroke="hsl(var(--border))" />
-                                <PolarAngleAxis
-                                    dataKey="subject"
-                                    tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
-                                />
-                                <PolarRadiusAxis
-                                    domain={[0, 100]}
-                                    tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
-                                    angle={90}
-                                />
-                                <Radar
-                                    name="Mastery"
-                                    dataKey="mastery"
-                                    stroke="#E34A32"
-                                    fill="#E34A32"
-                                    fillOpacity={0.18}
-                                    strokeWidth={2}
-                                    onMouseEnter={(payload) => {
-                                        if (payload?.subject && selectedSubject !== payload.subject) {
-                                            setSelectedSubject(payload.subject);
-                                        }
-                                    }}
-                                />
-                                <Tooltip
-                                    contentStyle={{
-                                        backgroundColor: "hsl(var(--card))",
-                                        border: "1px solid hsl(var(--border))",
-                                        borderRadius: "0.75rem",
-                                        fontSize: "13px",
-                                    }}
-                                    formatter={(value, name, props) => [
-                                        `${value}% mastery · ${props.payload.skillCount} skill${props.payload.skillCount !== 1 ? "s" : ""}`,
-                                        props.payload.subject,
-                                    ]}
-                                />
-                            </RadarChart>
+                            {subjectData.length >= 3 ? (
+                                <RadarChart data={subjectData} outerRadius="72%">
+                                    <PolarGrid stroke="hsl(var(--border))" />
+                                    <PolarAngleAxis
+                                        dataKey="subject"
+                                        tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
+                                    />
+                                    <PolarRadiusAxis
+                                        domain={[0, 100]}
+                                        tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                                        angle={30}
+                                    />
+                                    <Radar
+                                        name="Mastery"
+                                        dataKey="mastery"
+                                        stroke="#E34A32"
+                                        fill="#E34A32"
+                                        fillOpacity={0.18}
+                                        strokeWidth={2}
+                                        onMouseEnter={(payload) => {
+                                            if (payload?.subject && selectedSubject !== payload.subject) {
+                                                setSelectedSubject(payload.subject);
+                                            }
+                                        }}
+                                    />
+                                    <Tooltip
+                                        contentStyle={{
+                                            backgroundColor: "hsl(var(--card))",
+                                            border: "1px solid hsl(var(--border))",
+                                            borderRadius: "0.75rem",
+                                            fontSize: "13px",
+                                        }}
+                                        formatter={(value, name, props) => [
+                                            `${value}% mastery · ${props.payload.skillCount} skill${props.payload.skillCount !== 1 ? "s" : ""}`,
+                                            props.payload.subject,
+                                        ]}
+                                    />
+                                </RadarChart>
+                            ) : (
+                                <BarChart data={subjectData} layout="vertical" margin={{ top: 20, right: 30, left: 40, bottom: 20 }}>
+                                    <XAxis type="number" domain={[0, 100]} tick={{ fontSize: 11 }} />
+                                    <YAxis type="category" dataKey="subject" width={110} tick={{ fontSize: 11 }} />
+                                    <Tooltip formatter={(val) => [`${val}%`, "Mastery"]} />
+                                    <Bar dataKey="mastery" radius={[0, 8, 8, 0]}>
+                                        {subjectData.map((entry, index) => (
+                                            <Cell key={`cell-${index}`} fill={BAR_COLORS[index % BAR_COLORS.length]} />
+                                        ))}
+                                    </Bar>
+                                </BarChart>
+                            )}
                         </ResponsiveContainer>
                     </div>
 

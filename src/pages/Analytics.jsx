@@ -168,14 +168,27 @@ export default function Analytics() {
                         <AlertCircle className="w-5 h-5 text-amber-500" />
                         Gap Radar
                     </h2>
-                    <div className="grid md:grid-cols-2 gap-6">
+                    <div className="grid md:grid-cols-2 gap-6 items-center">
                         <ResponsiveContainer width="100%" height={300}>
-                            <RadarChart data={gapData}>
-                                <PolarGrid />
-                                <PolarAngleAxis dataKey="skill" tick={{ fontSize: 10 }} />
-                                <PolarRadiusAxis domain={[0, 100]} />
-                                <Radar name="Mastery" dataKey="value" stroke="#E34A32" fill="#E34A32" fillOpacity={0.3} />
-                            </RadarChart>
+                            {gapData.length >= 3 ? (
+                                <RadarChart data={gapData}>
+                                    <PolarGrid />
+                                    <PolarAngleAxis dataKey="skill" tick={{ fontSize: 11 }} />
+                                    <PolarRadiusAxis angle={30} domain={[0, 100]} tick={{ fontSize: 10 }} />
+                                    <Radar name="Mastery" dataKey="value" stroke="#E34A32" fill="#E34A32" fillOpacity={0.3} />
+                                </RadarChart>
+                            ) : (
+                                <BarChart data={gapData} layout="vertical" margin={{ top: 20, right: 30, left: 40, bottom: 20 }}>
+                                    <XAxis type="number" domain={[0, 100]} tick={{ fontSize: 11 }} />
+                                    <YAxis type="category" dataKey="skill" width={90} tick={{ fontSize: 11 }} />
+                                    <Tooltip formatter={(val) => [`${val}%`, "Mastery"]} />
+                                    <Bar dataKey="value" radius={[0, 8, 8, 0]}>
+                                        {gapData.map((entry, index) => (
+                                            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                                        ))}
+                                    </Bar>
+                                </BarChart>
+                            )}
                         </ResponsiveContainer>
                         <div className="space-y-2">
                             {gapData.map((gap, i) => {

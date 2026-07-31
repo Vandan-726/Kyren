@@ -102,15 +102,25 @@ export default function MorningCheckIn() {
                 passed: score >= 50,
             });
 
-            // Update mastery score (blend with existing)
+            // Update or create mastery score (blend with existing)
             const existingScore = weakestSkill;
-            const newPercentage = Math.round((existingScore.percentage + score) / 2);
+            const currentPct = existingScore?.percentage || 0;
+            const newPercentage = Math.round((currentPct + score) / 2);
             const newStatus = newPercentage >= 80 ? "Mastered" : newPercentage >= 50 ? "Improving" : "Needs Review";
-            await kyren.entities.MasteryScore.update(existingScore.id, {
-                percentage: newPercentage,
-                status: newStatus,
-                last_updated: new Date().toISOString(),
-            });
+            if (existingScore && existingScore.id) {
+                await kyren.entities.MasteryScore.update(existingScore.id, {
+                    percentage: newPercentage,
+                    status: newStatus,
+                });
+            } else {
+                await kyren.entities.MasteryScore.create({
+                    user_id: user.id,
+                    skill_id: weakestSkill?.skill_id || "General Learning",
+                    skill_name: weakestSkill?.skill_name || "General Learning",
+                    percentage: score,
+                    status: newStatus,
+                });
+            }
 
             await refreshMastery();
 

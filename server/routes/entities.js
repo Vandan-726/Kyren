@@ -80,6 +80,75 @@ async function normalizeLearningTaskSkillId(body) {
   }
 }
 
+async function normalizeMasteryScoreSkillId(body) {
+  if (!body) return body
+
+  const skillIdentifier = body.skill_id || body.skill_name
+  let skillId = null
+
+  if (skillIdentifier && isUuid(skillIdentifier)) {
+    skillId = skillIdentifier
+  } else if (skillIdentifier) {
+    const resolved = await resolveSkillReference(skillIdentifier)
+    if (resolved && isUuid(resolved)) {
+      skillId = resolved
+    }
+  }
+
+  if (!skillId) {
+    const existing = await supabase.from("skills").select("id").limit(1).maybeSingle()
+    if (existing.data?.id) {
+      skillId = existing.data.id
+    } else {
+      const created = await supabase
+        .from("skills")
+        .insert({
+          skill_code: "general",
+          skill_name: "General Learning",
+          domain: "General",
+          difficulty_level: "beginner",
+        })
+        .select("id")
+        .single()
+      if (created.data?.id) {
+        skillId = created.data.id
+      }
+    }
+  }
+
+  return {
+    ...body,
+    skill_id: skillId,
+  }
+}
+
+async function resolveQuizIdReference(quizId) {
+  if (quizId && isUuid(quizId)) {
+    const check = await supabase.from("lesson_quizzes").select("id").eq("id", quizId).maybeSingle()
+    if (check.data?.id) return check.data.id
+  }
+
+  const existing = await supabase.from("lesson_quizzes").select("id").limit(1).maybeSingle()
+  if (existing.data?.id) return existing.data.id
+
+  const lessonCheck = await supabase.from("lessons").select("id").limit(1).maybeSingle()
+  let lessonId = lessonCheck.data?.id
+  if (!lessonId) {
+    const courseCheck = await supabase.from("courses").select("id").limit(1).maybeSingle()
+    let courseId = courseCheck.data?.id
+    if (!courseId) {
+      const newCourse = await supabase.from("courses").insert({ title: "General Studies", status: "published" }).select("id").single()
+      courseId = newCourse.data.id
+    }
+    const newModule = await supabase.from("course_modules").insert({ course_id: courseId, title: "General Module", module_number: 1 }).select("id").single()
+    const newLesson = await supabase.from("lessons").insert({ module_id: newModule.data.id, lesson_number: 1, title: "Check-In Lesson" }).select("id").single()
+    lessonId = newLesson.data.id
+  }
+
+  const newQuiz = await supabase.from("lesson_quizzes").insert({ lesson_id: lessonId, title: "Morning Check-In Quiz" }).select("id").single()
+  return newQuiz.data.id
+}
+
 // Helper to format hours numeric back into estimated_time (e.g., "30 min")
 const formatHoursToEstimatedTime = (hours) => {
   if (hours == null) return "30 min"
@@ -99,6 +168,12 @@ const MAPPERS = {
         res.mastery_level = data.status === "Mastered" ? "mastered" : "learning"
         delete res.status
       }
+      delete res.last_updated
+      delete res.next_review_date
+      delete res.ease_factor
+      delete res.interval_days
+      delete res.repetitions
+      delete res.skill_name
       return res
     },
     toFrontend: (data) => {
@@ -267,14 +342,34 @@ const MAPPERS = {
   }
 }
 
+const TABLES_WITHOUT_USER_ID = new Set([
+  "course_modules",
+  "lessons",
+  "lesson_videos",
+  "lesson_quizzes",
+  "quiz_questions",
+  "conversation_messages",
+  "skills",
+]);
+
 const handleRequest = async (req, res, next) => {
   try {
-    const rawEntityName = req.params.namespace
-      ? `${req.params.namespace}/${req.params.entityName}`
-      : req.params.entityName
+    let namespace = req.params.namespace
+    let entityParam = req.params.entityName
+    let id = req.params.id
+
+    // Disambiguate if a 2-segment path like /LearningTask/123 matched /:namespace/:entityName
+    if (namespace && !["learning", "progress"].includes(namespace.toLowerCase())) {
+      id = entityParam
+      entityParam = namespace
+      namespace = undefined
+    }
+
+    const rawEntityName = namespace
+      ? `${namespace}/${entityParam}`
+      : entityParam
     const entityName = normalizeEntityName(rawEntityName)
     const tableName = getTableName(entityName)
-    const id = req.params.id
 
     // Check if this is a known table or if we should skip it
     if (tableName === "health" || tableName === "auth" || tableName === "voice" || tableName === "learning" || tableName === "progress" || tableName === "skills" || tableName === "agents") {
@@ -301,18 +396,19 @@ const handleRequest = async (req, res, next) => {
         let selectQuery = query.select("*")
 
         // Automatically enforce user-level sandbox for security (unless it's public metadata)
-        if (tableName !== "courses" && tableName !== "lessons" && tableName !== "skills" && tableName !== "conversation_messages") {
+        if (!TABLES_WITHOUT_USER_ID.has(tableName)) {
           selectQuery = selectQuery.eq("user_id", req.user.id)
         }
 
         // Apply filters passed as query params
-        const isAutoSandboxed = tableName !== "courses" && tableName !== "lessons" && tableName !== "skills" && tableName !== "conversation_messages"
+        const isAutoSandboxed = !TABLES_WITHOUT_USER_ID.has(tableName)
         Object.entries(req.query).forEach(([key, val]) => {
           // Skip user_id from query params if already auto-sandboxed to prevent
           // conflicting filters (frontend user.id may differ from req.user.id)
           if (key === "user_id" && isAutoSandboxed) return
           if (key !== "orderBy" && key !== "page" && key !== "limit") {
             let mappedKey = mapFilterKey(entityName, key)
+            if (mappedKey === null) return
             let mappedVal = val
 
             // Parse booleans
@@ -384,11 +480,13 @@ const handleRequest = async (req, res, next) => {
     // 2. CREATE (POST)
     if (req.method === "POST") {
       let body = { ...req.body }
-      if (tableName !== "courses" && tableName !== "lessons" && tableName !== "skills" && entityName !== "Message") {
+      if (req.user && req.user.id && !TABLES_WITHOUT_USER_ID.has(tableName)) {
         body.user_id = req.user.id
       }
-      if (entityName === "Message") {
+      if (TABLES_WITHOUT_USER_ID.has(tableName)) {
         delete body.user_id
+      }
+      if (entityName === "Message") {
         delete body.linked_gap_ids
       }
       if (entityName === "LearningGap") {
@@ -397,6 +495,12 @@ const handleRequest = async (req, res, next) => {
       if (entityName === "LearningTask") {
         delete body.skill_name
         body = await normalizeLearningTaskSkillId(body)
+      }
+      if (entityName === "MasteryScore") {
+        body = await normalizeMasteryScoreSkillId(body)
+      }
+      if (entityName === "QuizAttempt") {
+        body.quiz_id = await resolveQuizIdReference(body.quiz_id)
       }
       body = mapEntityDataToBackend(entityName, body)
       if (MAPPERS[entityName]) {
@@ -429,23 +533,26 @@ const handleRequest = async (req, res, next) => {
         body = await normalizeLearningTaskSkillId(body)
         delete body.skill_name
       }
+      if (entityName === "MasteryScore") {
+        body = await normalizeMasteryScoreSkillId(body)
+      }
       body = mapEntityDataToBackend(entityName, body)
       if (MAPPERS[entityName]) {
         body = MAPPERS[entityName].toBackend(body)
       }
 
       let updateQuery = query.update(body).eq("id", updateId)
-      if (tableName !== "courses" && tableName !== "lessons" && tableName !== "skills") {
+      if (!TABLES_WITHOUT_USER_ID.has(tableName)) {
         updateQuery = updateQuery.eq("user_id", req.user.id)
       }
 
       const row = unwrap(
-        await updateQuery.select("*").single(),
+        await updateQuery.select("*").maybeSingle(),
         `Updating ${tableName}`
       )
 
       // Trigger course generation when a learning task status is approved
-      if (entityName === "LearningTask" && row.status === "approved") {
+      if (entityName === "LearningTask" && row && row.status === "approved") {
         console.log(`[Task Trigger] Learning task ${row.id} approved. Enqueuing course.generate job...`)
         try {
           await enqueueJob({
@@ -461,7 +568,7 @@ const handleRequest = async (req, res, next) => {
         }
       }
 
-      let data = row
+      let data = row || { id: updateId, ...body }
       data = mapEntityDataToFrontend(entityName, data)
       if (MAPPERS[entityName]) {
         data = MAPPERS[entityName].toFrontend(data)
@@ -477,7 +584,7 @@ const handleRequest = async (req, res, next) => {
       }
 
       let deleteQuery = query.delete().eq("id", deleteId)
-      if (tableName !== "courses" && tableName !== "lessons" && tableName !== "skills") {
+      if (!TABLES_WITHOUT_USER_ID.has(tableName)) {
         deleteQuery = deleteQuery.eq("user_id", req.user.id)
       }
 
@@ -494,9 +601,14 @@ const handleRequest = async (req, res, next) => {
   }
 }
 
-router.all("/:namespace/:entityName", requireAuth, handleRequest)
-router.all("/:namespace/:entityName/:id", requireAuth, handleRequest)
+router.all("/learning/:entityName", (req, res, next) => { req.params.namespace = "learning"; next(); }, requireAuth, handleRequest)
+router.all("/learning/:entityName/:id", (req, res, next) => { req.params.namespace = "learning"; next(); }, requireAuth, handleRequest)
+router.all("/progress/:entityName", (req, res, next) => { req.params.namespace = "progress"; next(); }, requireAuth, handleRequest)
+router.all("/progress/:entityName/:id", (req, res, next) => { req.params.namespace = "progress"; next(); }, requireAuth, handleRequest)
+
 router.all("/:entityName", requireAuth, handleRequest)
 router.all("/:entityName/:id", requireAuth, handleRequest)
+router.all("/:namespace/:entityName", requireAuth, handleRequest)
+router.all("/:namespace/:entityName/:id", requireAuth, handleRequest)
 
 export default router

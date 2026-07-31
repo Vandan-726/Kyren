@@ -309,7 +309,9 @@ export default function LessonDetail() {
 
             // Update mastery score + SM-2 spaced repetition scheduling
             const newStatus = score >= 80 ? "Mastered" : score >= 50 ? "Improving" : "Needs Review";
-            const existingScore = masteryScores.find(m => m.skill_id === lesson.skill_id);
+            const skillIdCandidate = lesson?.skill_id || course?.title || lesson?.title || "General Learning";
+            const skillNameCandidate = lesson?.skill_name || course?.title || lesson?.title || "General Learning";
+            const existingScore = masteryScores.find(m => m.skill_id === skillIdCandidate || m.skill_id === lesson?.skill_id);
             const reviewSchedule = scheduleSkillReview(existingScore, score);
             if (existingScore) {
                 const newPercentage = Math.round((existingScore.percentage + score) / 2);
@@ -325,8 +327,8 @@ export default function LessonDetail() {
             } else {
                 await kyren.entities.MasteryScore.create({
                     user_id: userId,
-                    skill_id: lesson.skill_id,
-                    skill_name: lesson.skill_name || getSkillById(lesson.skill_id)?.name,
+                    skill_id: skillIdCandidate,
+                    skill_name: skillNameCandidate,
                     percentage: score,
                     status: newStatus,
                     last_updated: new Date().toISOString(),

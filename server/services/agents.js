@@ -871,3 +871,9 @@ Return a JSON object: { "flashcards": [{ "concept": "...", "front": "...", "back
 
     return await callLLM(prompt, schema, "Flashcard Agent", "Grok");
 }
+
+export { generateLessonSummary, extractKeyTakeaways, generateCombinedSummaryAndTakeaways } from "./ai/agents/content.agent.js";
+export { generateQuiz as generateAdaptiveQuiz, analyzeQuizBehavior, calculateMastery } from "./ai/agents/assessment.agent.js";
+export { checkAndTriggerRecoveryMode, generateRecoveryModule } from "./ai/agents/recovery.agent.js";
+export { generateNextCourseRecommendations } from "./ai/agents/recommendation.agent.js";
+

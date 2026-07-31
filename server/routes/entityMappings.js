@@ -47,6 +47,11 @@ function parseEstimatedTimeToHours(timeValue) {
   return Number.isFinite(parsed) ? (parsed > 24 ? parsed / 60 : parsed) : 0.5
 }
 
+function formatHoursToEstimatedTime(hours) {
+  if (hours == null) return "30 min"
+  return Math.round(hours * 60) + " min"
+}
+
 function normalizeEntityName(entityName) {
   if (!entityName) return entityName
   if (entityName === "learning/gaps") return "LearningGap"
@@ -73,7 +78,13 @@ function mapFilterKey(entityName, key) {
     if (key === "detected_language") return "language"
   }
 
-  if (key === "created_date") return "created_at"
+  if (entityName === "TaskActivityLog" || entityName === "QuizAttempt") {
+    if (key === "created_at") return "created_date"
+    if (key === "created_date") return "created_date"
+  } else if (key === "created_date") {
+    return "created_at"
+  }
+
   if (entityName === "LearningGap") {
     if (key === "resolved") return "status"
     if (key === "skill_name") return "gap_title"
@@ -95,6 +106,15 @@ function mapFilterKey(entityName, key) {
   if (entityName === "Recommendation") {
     if (key === "type") return "recommendation_type"
   }
+  if (entityName === "QuizAttempt") {
+    if (key === "lesson_id" || key === "skill_id" || key === "answers") return null
+  }
+  if (entityName === "Lesson") {
+    if (key === "skill_id" || key === "skill_name" || key === "course_id") return null
+  }
+  if (entityName === "Quiz") {
+    if (key === "module_id" || key === "difficulty") return null
+  }
 
   return key
 }
@@ -102,8 +122,15 @@ function mapFilterKey(entityName, key) {
 function mapOrderField(entityName, field) {
   const canonicalName = normalizeEntityName(entityName)
   entityName = canonicalName
-  if (field === "created_date") return "created_at"
+  if (entityName === "TaskActivityLog" || entityName === "QuizAttempt") {
+    if (field === "created_at") return "created_date"
+    if (field === "created_date") return "created_date"
+  } else if (field === "created_date") {
+    return "created_at"
+  }
   if (entityName === "LearningTask" && field === "priority") return "priority_level"
+  if (entityName === "Module" && field === "order_index") return "module_number"
+  if (entityName === "Lesson" && field === "order_index") return "lesson_number"
   return field
 }
 
@@ -111,6 +138,25 @@ function mapEntityDataToBackend(entityName, data) {
   const canonicalName = normalizeEntityName(entityName)
   entityName = canonicalName
   const result = { ...data }
+
+  if (entityName === "Course") {
+    if (result.difficulty !== undefined) {
+      result.difficulty_level = result.difficulty
+      delete result.difficulty
+    }
+    if (result.estimated_duration !== undefined) {
+      result.estimated_duration_hours = parseEstimatedTimeToHours(result.estimated_duration)
+      delete result.estimated_duration
+    }
+    if (result.generated_from_task_id !== undefined) {
+      result.task_id = result.generated_from_task_id
+      delete result.generated_from_task_id
+    }
+    delete result.learning_objectives
+    delete result.language
+    delete result.progress
+    return result
+  }
 
   if (entityName === "Conversation") {
     if (result.context_type !== undefined) {
@@ -122,7 +168,6 @@ function mapEntityDataToBackend(entityName, data) {
       delete result.context_ref_id
     }
     if (result.detected_language !== undefined) {
-      // ai_conversations does not store language, so drop this field here.
       delete result.detected_language
     }
   }
@@ -141,6 +186,9 @@ function mapEntityDataToBackend(entityName, data) {
   if (entityName === "LearningTask") {
     if (result.skill_name !== undefined) {
       delete result.skill_name
+    }
+    if (result.course_id !== undefined) {
+      delete result.course_id
     }
     if (result.title !== undefined) {
       result.task_title = result.title
@@ -176,6 +224,87 @@ function mapEntityDataToBackend(entityName, data) {
     return result
   }
 
+  if (entityName === "Module") {
+    if (result.order_index !== undefined) {
+      result.module_number = result.order_index
+      delete result.order_index
+    }
+    return result
+  }
+
+  if (entityName === "Lesson") {
+    if (result.order_index !== undefined) {
+      result.lesson_number = result.order_index
+      delete result.order_index
+    }
+    if (result.ai_summary !== undefined) {
+      if (!result.content_markdown) {
+        result.content_markdown = result.ai_summary
+      }
+      delete result.ai_summary
+    }
+    delete result.course_id
+    delete result.completed
+    delete result.skill_id
+    delete result.skill_name
+    return result
+  }
+
+  if (entityName === "Quiz") {
+    delete result.module_id
+    delete result.difficulty
+    return result
+  }
+
+  if (entityName === "QuizQuestion") {
+    if (result.difficulty !== undefined) {
+      result.difficulty_level = result.difficulty
+      delete result.difficulty
+    }
+    return result
+  }
+
+  if (entityName === "QuizAttempt") {
+    delete result.lesson_id
+    delete result.skill_id
+    delete result.answers
+    if (result.total_questions !== undefined && result.score !== undefined) {
+      if (result.correct_answers === undefined) {
+        result.correct_answers = Math.round((result.score / 100) * result.total_questions)
+      }
+      if (result.accuracy_percentage === undefined) {
+        result.accuracy_percentage = result.score
+      }
+    }
+    return result
+  }
+
+  if (entityName === "MasteryScore") {
+    if (result.percentage !== undefined) {
+      result.mastery_percentage = result.percentage
+      delete result.percentage
+    }
+    if (result.status !== undefined) {
+      result.mastery_level = result.status === "Mastered" ? "mastered" : "learning"
+      delete result.status
+    }
+    delete result.last_updated
+    delete result.next_review_date
+    delete result.ease_factor
+    delete result.interval_days
+    delete result.repetitions
+    delete result.skill_name
+    return result
+  }
+
+  if (entityName === "Note") {
+    if (result.pinned !== undefined) {
+      result.is_pinned = result.pinned
+      delete result.pinned
+    }
+    return result
+  }
+
   return result
 }
 
@@ -184,6 +313,36 @@ function mapEntityDataToFrontend(entityName, data) {
   entityName = canonicalName
   if (!data) return data
   const result = { ...data }
+
+  if (entityName === "Course") {
+    if (result.difficulty_level !== undefined) {
+      result.difficulty = result.difficulty_level
+    }
+    if (result.estimated_duration_hours !== undefined) {
+      result.estimated_duration = formatHoursToEstimatedTime(result.estimated_duration_hours)
+    }
+    if (result.task_id !== undefined) {
+      result.generated_from_task_id = result.task_id
+    }
+  }
+
+  if (entityName === "Module") {
+    if (result.module_number !== undefined) {
+      result.order_index = result.module_number
+    }
+  }
+
+  if (entityName === "Lesson") {
+    if (result.lesson_number !== undefined) {
+      result.order_index = result.lesson_number
+    }
+    if (result.content_markdown !== undefined) {
+      result.ai_summary = result.content_markdown
+    }
+    if (result.completed === undefined) {
+      result.completed = false
+    }
+  }
 
   if (entityName === "Conversation") {
     if (result.conversation_type !== undefined) {
@@ -203,6 +362,18 @@ function mapEntityDataToFrontend(entityName, data) {
     }
     if (result.language !== undefined) {
       result.detected_language = result.language
+    }
+  }
+
+  if (entityName === "QuizQuestion") {
+    if (result.difficulty_level !== undefined) {
+      result.difficulty = result.difficulty_level
+    }
+  }
+
+  if (entityName === "Note") {
+    if (result.is_pinned !== undefined) {
+      result.pinned = result.is_pinned
     }
   }
 

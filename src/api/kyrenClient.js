@@ -23,11 +23,19 @@ class EntityProxy {
     if (token) {
       headers["Authorization"] = `Bearer ${token}`
     }
-    return fetch(url, {
+    const res = await fetch(url, {
       ...options,
       headers,
       credentials: "include",
     })
+    if (res.status === 401) {
+      localStorage.removeItem("auth_token")
+      const path = window.location.pathname
+      if (path !== "/login" && path !== "/register" && path !== "/forgot-password") {
+        window.location.href = "/login"
+      }
+    }
+    return res
   }
 
   async list(filter = {}, orderBy = null) {

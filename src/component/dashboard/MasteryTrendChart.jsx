@@ -36,7 +36,22 @@ export default function MasteryTrendChart() {
 
     // Build trend data: for each unique date, a data point with each skill's latest score up to that date
     const { chartData, skills } = useMemo(() => {
-        if (quizAttempts.length === 0) return { chartData: [], skills: [] };
+        if (quizAttempts.length === 0) {
+            if (masteryScores && masteryScores.length > 0) {
+                const skillList = masteryScores.map((m, i) => ({
+                    id: m.id || m.skill_id,
+                    name: m.skill_name || "Skill",
+                    color: LINE_COLORS[i % LINE_COLORS.length],
+                }));
+                const todayStr = formatDate(new Date().toISOString());
+                const point = { date: todayStr };
+                masteryScores.forEach((m) => {
+                    point[m.skill_name || "Skill"] = m.percentage || 0;
+                });
+                return { chartData: [point], skills: skillList };
+            }
+            return { chartData: [], skills: [] };
+        }
 
         // Group attempts by skill, sorted by date
         const bySkill = {};
