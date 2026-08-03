@@ -38,10 +38,19 @@ export default function MorningCheckIn() {
         const active = masteryScores
             .filter((m) => m.status !== "Locked")
             .sort((a, b) => (a.percentage || 0) - (b.percentage || 0));
-        return active[0] || null;
-    }, [masteryScores]);
+        if (active.length > 0) return active[0];
 
-    // Don't render if already done today, dismissed, or no weakest skill
+        // Fallback skill tailored to user background if no mastery records exist yet
+        const defaultSkill = user?.stem_interests?.[0] || user?.learning_goal || "Data Structures & Algorithms";
+        return {
+            skill_id: "general_checkin",
+            skill_name: defaultSkill,
+            percentage: 0,
+            status: "Needs Review",
+        };
+    }, [masteryScores, user]);
+
+    // Don't render if already done today or dismissed
     const alreadyDone = localStorage.getItem(todayKey) === "done";
 
     if (alreadyDone || dismissed || !weakestSkill) return null;
@@ -54,8 +63,12 @@ export default function MorningCheckIn() {
             const response = await generateSkillCheckIn({
                 skillName: weakestSkill.skill_name,
                 skillDescription: skillMeta?.description || weakestSkill.skill_name,
-                difficulty: skillMeta?.difficulty_level || "beginner",
+                difficulty: skillMeta?.difficulty_level || "intermediate",
                 currentMastery: weakestSkill.percentage,
+                educationLevel: user?.education_level,
+                userGoal: user?.learning_goal,
+                stemInterests: user?.stem_interests,
+                userId: user?.id,
             });
             setQuestions(response.questions || []);
         } catch (e) {

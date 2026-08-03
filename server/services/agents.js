@@ -8,6 +8,7 @@
 //      (server/config/xai.js -> recordUsage), so every retry and failure is
 //      captured in ai_api_usage rather than only the happy path.
 import { chat } from "../config/ai.js";
+import { supabase } from "../config/supabase.js";
 import {
     SKILLS_GRAPH,
     SKILL_DEPENDENCIES,
@@ -504,16 +505,72 @@ Return JSON with an array of questions, each having: question_text, options (arr
 }
 
 // === 5b. MORNING CHECK-IN AGENT ===
-// Generates 3 quick questions targeting a specific skill (not lesson-bound), for daily review
-export async function generateSkillCheckIn({ skillName, skillDescription, difficulty, currentMastery }) {
-    const prompt = `You are KYREN's Assessment Agent. Generate exactly 3 quick quiz questions for a morning mastery check-in.
+// Generates 3 quick questions targeting a specific skill, calibrated strictly to student education level and background
+export async function generateSkillCheckIn({
+    skillName,
+    skillDescription,
+    difficulty,
+    currentMastery,
+    educationLevel,
+    userGoal,
+    stemInterests,
+    userId,
+}) {
+    let eduLevel = educationLevel
+    let goal = userGoal
+    let interests = stemInterests
 
-Skill: ${skillName}
-Description: ${skillDescription || "N/A"}
-Difficulty: ${difficulty || "beginner"}
-Student's current mastery: ${currentMastery ?? "Unknown"}%
+    if (userId && (!eduLevel || !goal || !interests)) {
+        try {
+            const { data: profile } = await supabase
+                .from("student_profiles")
+                .select("education_level, learning_goal, stem_interests")
+                .eq("user_id", userId)
+                .maybeSingle()
+            if (profile) {
+                eduLevel = eduLevel || profile.education_level
+                goal = goal || profile.learning_goal
+                interests = interests || profile.stem_interests
+            }
+        } catch (err) {
+            console.error("[v0] Could not fetch student profile for check-in:", err?.message || err)
+        }
+    }
 
-Since this is a daily check-in to keep knowledge sharp, focus on core concepts and fundamentals of this skill. If the student's mastery is low, use easier questions; if higher, use slightly more challenging application questions.
+    const eduLevelMap = {
+        high_school: "High School (Class 9-12)",
+        undergraduate: "Undergraduate / College Degree",
+        graduate: "Postgraduate / Master's / PhD",
+        professional: "Working Professional / Software Engineer",
+        other: "Higher Education / Self-Taught Learner",
+    }
+    const eduLevelStr = eduLevelMap[eduLevel] || eduLevel || "Undergraduate / College Student"
+    const interestsStr = Array.isArray(interests) ? interests.join(", ") : (interests || "STEM & Technology")
+    const goalStr = goal || "STEM Concept Mastery"
+
+    const prompt = `You are KYREN's Assessment Agent. Generate exactly 3 high-quality, academically appropriate multiple-choice quiz questions for a daily morning mastery check-in.
+
+STUDENT PROFILE & ACADEMIC CONTEXT:
+- Target Skill: ${skillName}
+- Skill Description: ${skillDescription || "N/A"}
+- Academic / Education Level: ${eduLevelStr}
+- Primary Learning Goal: ${goalStr}
+- STEM Interests / Domain: ${interestsStr}
+- Student's Current Mastery Level: ${currentMastery ?? "Unknown"}%
+- Base Difficulty Level: ${difficulty || "intermediate"}
+
+CRITICAL ACADEMIC & AGE-APPROPRIATENESS RULES:
+1. QUESTION QUALITY & COMPLEXITY:
+   - Match question complexity, terminology, and problem structure directly to the student's education level (${eduLevelStr}) and target domain (${skillName}).
+   - NEVER generate primary school or elementary arithmetic questions (such as "What is 7+5?" or word problems about counting apples) unless the student is explicitly specified as elementary school.
+   - For High School, Undergraduate, Postgraduate, or Professional learners, generate real, academically appropriate conceptual, analytical, or practical problem-solving questions.
+   - For technical/programming/STEM skills, ask about code behavior, data structures, scientific/mathematical principles, algorithm logic, edge cases, or key domain concepts.
+2. DIFFICULTY SCALING:
+   - If current mastery is low (${currentMastery ?? 0}%), test fundamental principles or core concepts appropriate for an ${eduLevelStr} student.
+   - If mastery is high, test edge cases, code output, analysis, or multi-step logic.
+3. FORMAT REQUIREMENTS:
+   - Provide 4 distinct, non-trivial options per question.
+   - Specify the exact string of the correct option in correct_answer.
 
 Return JSON with an array of exactly 3 questions, each having: question_text, options (array of 4 strings), correct_answer (the exact text of the correct option), difficulty.`;
 
