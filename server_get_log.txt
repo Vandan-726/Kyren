@@ -1,1 +1,0 @@
-{"tableName":"base44/Conversation","query":{"user_id":"2eb687e4-f14f-4de2-9a3f-d02e59c0d3c8","context_type":"doubt_solver","orderBy":"-created_date"},"userId":"2eb687e4-f14f-4de2-9a3f-d02e59c0d3c8","resultLength":"error","error":{"code":"PGRST125","details":null,"hint":null,"message":"Invalid path specified in request URL"}}
