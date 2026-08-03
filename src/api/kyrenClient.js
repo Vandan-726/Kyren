@@ -212,7 +212,20 @@ class KyrenClient {
         }
         
         const providerInstance = new GoogleAuthProvider();
-        const result = await signInWithPopup(auth, providerInstance);
+        providerInstance.setCustomParameters({ prompt: 'select_account' });
+        
+        let result;
+        try {
+          result = await signInWithPopup(auth, providerInstance);
+        } catch (popupErr) {
+          if (popupErr.code === 'auth/popup-blocked') {
+            throw new Error("Google sign-in popup was blocked by browser. Please allow popups for this site.");
+          } else if (popupErr.code === 'auth/popup-closed-by-user') {
+            throw new Error("Sign-in process was cancelled.");
+          }
+          throw popupErr;
+        }
+        
         const idToken = await result.user.getIdToken();
         
         const data = await kyren.request("/auth/google", {

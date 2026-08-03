@@ -108,10 +108,14 @@ export async function getUserById(id) {
  * downstream query has to handle a missing profile or streak row.
  */
 async function ensureUserScaffolding(userId) {
-  await Promise.all([
-    supabase.from("student_profiles").upsert({ user_id: userId }, { onConflict: "user_id" }),
-    supabase.from("learning_streaks").upsert({ user_id: userId }, { onConflict: "user_id" }),
-  ])
+  try {
+    await Promise.all([
+      supabase.from("student_profiles").upsert({ user_id: userId }, { onConflict: "user_id" }),
+      supabase.from("learning_streaks").upsert({ user_id: userId }, { onConflict: "user_id" }),
+    ])
+  } catch (err) {
+    console.error("[v0] Scaffolding creation warning:", err?.message || err)
+  }
 }
 
 /** Mints the access + refresh pair returned by every auth entrypoint. */
@@ -192,7 +196,8 @@ export async function loginWithGoogle({ idToken }, context = {}) {
     decoded = await verifyFirebaseIdToken(idToken)
   } catch (error) {
     if (error.code === "FIREBASE_NOT_CONFIGURED") throw serviceUnavailable(error.message)
-    throw unauthorized("Google sign-in could not be verified")
+    console.error("[v0] Google verify error:", error)
+    throw unauthorized(`Google sign-in could not be verified: ${error.message || "Invalid token"}`)
   }
 
   const email = normalizeEmail(decoded.email)

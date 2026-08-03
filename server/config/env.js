@@ -33,7 +33,11 @@ function readBool(key, fallback = false) {
  */
 function normalizePrivateKey(key) {
   if (!key) return undefined
-  return key.includes("\\n") ? key.replace(/\\n/g, "\n") : key
+  let cleaned = String(key).trim()
+  if ((cleaned.startsWith('"') && cleaned.endsWith('"')) || (cleaned.startsWith("'") && cleaned.endsWith("'"))) {
+    cleaned = cleaned.slice(1, -1)
+  }
+  return cleaned.replace(/\\\\n/g, "\n").replace(/\\n/g, "\n")
 }
 
 export const env = {

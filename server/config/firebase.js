@@ -57,14 +57,18 @@ export async function verifyFirebaseIdToken(idToken) {
   initialize()
 
   if (!app) {
+    const detailMsg = initError ? ` Initialization error: ${initError.message}` : ""
     const error = new Error(
-      "Google sign-in is not configured on this server. Set FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL and FIREBASE_PRIVATE_KEY.",
+      `Google sign-in is not configured on this server.${detailMsg} Set FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL and FIREBASE_PRIVATE_KEY.`,
     )
     error.code = "FIREBASE_NOT_CONFIGURED"
     throw error
   }
 
-  // checkRevoked: true means a disabled/deleted Firebase user cannot keep
-  // trading a still-unexpired ID token for fresh KYREN sessions.
-  return getAuth(app).verifyIdToken(idToken, true)
+  try {
+    return await getAuth(app).verifyIdToken(idToken, true)
+  } catch (error) {
+    console.error("[v0] verifyFirebaseIdToken error:", error?.code || error?.message, error)
+    throw error
+  }
 }

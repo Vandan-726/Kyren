@@ -47,8 +47,9 @@ export function unwrap(result, context = "database query") {
   if (result.error) {
     const err = new Error(`${context} failed: ${result.error.message}`)
     err.status = 500
-    err.code = result.error.code
+    err.code = result.error.code || "database_error"
     err.details = result.error.details
+    err.expected = true
     throw err
   }
   return result.data
