@@ -1,111 +1,105 @@
-# KYREN — Adaptive Vernacular STEM Learning OS
+# KYREN — Adaptive Vernacular STEM Learning Operating System
 
-![Kyren Adaptive Learning](https://img.shields.io/badge/Status-Hackathon_Ready-brightgreen) ![License](https://img.shields.io/badge/License-MIT-blue) ![Version](https://img.shields.io/badge/Version-1.0.0-orange)
+[![Status](https://img.shields.io/badge/Status-Production_Ready-brightgreen)](#) [![License](https://img.shields.io/badge/License-MIT-blue)](#) [![Version](https://img.shields.io/badge/Version-1.0.0-orange)](#)
 
-KYREN is not a generic LMS. It is not a basic AI chatbot or a simple course generator. **KYREN is a fully adaptive, vernacular STEM learning operating system.**
+KYREN is an adaptive, voice-first STEM learning operating system designed to personalize technical education in real time. Unlike static LMS platforms or generic conversational bots, KYREN dynamically builds custom learning graphs, identifies conceptual gaps, generates micro-modules, and continuously recalibrates curricula based on student mastery data.
 
-It is built specifically to translate and personalize STEM learning into interactive micro-modules that adjust to student learning gaps in real time. 
+## System Architecture & Core Loop
 
-**The Core Product Loop:**
-Talk → Understand → Detect Gaps → Build Dynamic Learning Tasks → Confirm Roadmap → Generate Course → Learn → Ask AI Tutor → Practice → Assess → Measure Mastery → Adapt → Recommend Next Skill
+KYREN operates on an asynchronous multi-agent orchestration architecture:
 
----
+`Conversation / Speech Input -> Knowledge Graph Evaluation -> Gap Detection Engine -> Dynamic Dependency Graph -> Modular Course Generation -> Contextual AI Tutoring -> Continuous Mastery Calibration`
 
-## ✨ Key Features & Differentiators
+### Key Capabilities
 
-*   **Dynamic Learning Task Engine:** Continuously updates a student's learning roadmap in real-time as new learning gaps are detected. Tasks automatically reorder based on prerequisite constraints.
-*   **Vernacular Learning (Voice-First):** Speak and interact in multiple Indian languages natively (Hindi, Gujarati, Tamil, etc.) powered by the Sarvam API.
-*   **Adaptive Micro-Modules:** If a student fails a concept, KYREN goes a level deeper and automatically generates a bite-sized, simplified micro-module to address the specific misconception before returning to the main track.
-*   **AI Course Generator & YouTube Curation Engine:** Automatically creates modular courses (Modules → Lessons → Quizzes) and curates high-quality, relevant YouTube videos prioritized by educational value and channel trust (e.g., Khan Academy, MIT).
-*   **Lesson-Specific AI Tutors:** Context-aware tutors attached to every lesson that know the video content, lesson objectives, and the student’s past mistakes.
-*   **Visual Knowledge Graph & Gap Radar:** See exactly what you know, what you're missing, and what prerequisites are blocking your goals.
-
----
-
-## 🛠 Tech Stack
-
-*   **Frontend:** React (Vite), Tailwind CSS, Framer Motion (for fluid animations), Shadcn UI.
-*   **Backend:** Node.js, Express.js.
-*   **Database:** Supabase (PostgreSQL) with advanced relational schema (users, courses, learning_tasks, mastery_scores, dependencies).
-*   **AI Orchestration Engine:** Multi-agent backend architecture (Course Architect, Content Agent, Tutor Agent).
-*   **Integrations:** 
-    *   **Google Gemini / Groq:** Reasoning, Gap Analysis, Course Structure Generation.
-    *   **Sarvam API:** Multilingual and voice interactions.
-    *   **YouTube Data API v3:** Educational video curation and ranking.
+* **Dynamic Dependency & Gap Engine**: Real-time evaluation of prerequisite constraints and knowledge gaps. Adjusts learning roadmaps dynamically as student mastery fluctuates.
+* **Multilingual & Voice Interface**: Native multilingual interaction (Hindi, Gujarati, Tamil, Telugu, etc.) powered by Sarvam AI voice models.
+* **Adaptive Micro-Module Generation**: Automatically detects missing prerequisite concepts and constructs targeted, bite-sized remedial modules before restoring the student to their primary learning track.
+* **Curriculum & Video Ranking Engine**: Programmatically generates structured course modules (Lessons, Objectives, Assessments) paired with educational YouTube content ranked by trust metrics and domain relevance.
+* **Lesson-Scoped Socratic AI Tutors**: Context-aware AI agents attached to individual lessons, equipped with video summaries, specific lesson objectives, and student error history.
+* **Visual Knowledge Graph**: Interactive visual representation of concept dependencies, prerequisite blocks, and mastery vectors.
 
 ---
 
-## 🚀 Getting Started
+## Technical Stack
+
+* **Frontend**: React 18, Vite, Tailwind CSS, Framer Motion, Radix UI.
+* **Backend Runtime**: Node.js ES Modules, Express.js.
+* **Deployment & Serverless**: Native Vercel Serverless Function entry point (`/api/index.js`), with scheduled Vercel Cron background worker draining.
+* **Database & Security**: Supabase (PostgreSQL) with relational identity, course, streak, and mastery schemas; JWT-based access/refresh token rotation.
+* **AI Orchestration Layer**: Multi-agent orchestration engine supporting Google Gemini, Groq, Sarvam AI (Voice), and YouTube Data API v3.
+
+---
+
+## Getting Started
 
 ### Prerequisites
 
-1.  **Node.js** (v18+ recommended)
-2.  **npm** or **yarn**
-3.  **Supabase** project (for PostgreSQL database and Auth)
-4.  API Keys for AI Integrations (Gemini, Sarvam, YouTube, etc.)
+* Node.js (v18.0.0 or higher)
+* npm, yarn, or pnpm
+* Supabase PostgreSQL instance
+* API credentials for Google Gemini, Sarvam AI, and YouTube Data API v3
 
-### 1. Installation
+### Installation
 
 Clone the repository and install dependencies:
 
 ```bash
-git clone https://github.com/your-repo/kyren.git
-cd kyren
+git clone https://github.com/Vandan-726/Kyren.git
+cd Kyren
 npm install
 ```
 
-### 2. Environment Configuration
+### Environment Configuration
 
-Create a `.env` file in the root directory. You can use the provided `.env.example` as a reference. Ensure the following core variables are populated:
+Create a `.env` file in the root directory:
 
 ```ini
-# Supabase Database Configuration
+# Supabase Configuration
 SUPABASE_URL=your_supabase_url
 SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 SUPABASE_ANON_KEY=your_anon_key
 
-# JWT & Auth
-JWT_SECRET=your_jwt_secret
+# JWT Security
+JWT_SECRET=your_jwt_access_secret
 JWT_REFRESH_SECRET=your_jwt_refresh_secret
 JWT_ACCESS_TTL=15m
 JWT_REFRESH_TTL_DAYS=30
 
-# Application Ports
+# System Settings
 PORT=3001
 NODE_ENV=development
 PUBLIC_APP_URL=http://localhost:5173
+CRON_SECRET=your_cron_secret
 
-# AI & API Integrations
+# AI & Media Services
 AI_PROVIDER=gemini
 GEMINI_API_KEY=your_gemini_api_key
 SARVAM_API_KEY=your_sarvam_api_key
 YOUTUBE_API_KEY=your_youtube_api_key
 
-# Firebase (Required for Google Login)
+# Firebase Authentication (Optional)
 VITE_FIREBASE_API_KEY=your_firebase_api_key
 VITE_FIREBASE_AUTH_DOMAIN=your_firebase_auth_domain
 VITE_FIREBASE_PROJECT_ID=your_firebase_project_id
 VITE_FIREBASE_APP_ID=your_firebase_app_id
+FIREBASE_PROJECT_ID=your_firebase_project_id
+FIREBASE_CLIENT_EMAIL=your_firebase_client_email
+FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n..."
 ```
 
-### 3. Running the Application Locally
+### Development Server
 
-KYREN uses a unified start script to spin up both the Vite frontend and the Express backend concurrently.
+Run both the Vite frontend dev server and Express API backend concurrently:
 
 ```bash
 npm run dev
 ```
 
-This command will:
-- Start the **Express API Backend** on `http://localhost:3001` (with automatic hot-reloading).
-- Start the **Vite React Frontend** on `http://localhost:5173`.
-- Automatically proxy all `/api/*` network requests from the frontend to the backend.
+* **Frontend**: `http://localhost:5173`
+* **API Server**: `http://localhost:3001` (automatically proxied via Vite)
 
-Open `http://localhost:5173` in your browser to start the KYREN learning experience.
-
-### 4. Running Backend Only (Optional)
-
-If you wish to only run the API server (e.g., for testing or isolated debugging):
+To run the API server independently:
 
 ```bash
 npm run dev:api
@@ -113,23 +107,27 @@ npm run dev:api
 
 ---
 
-## 🏭 Production Deployment
+## Production Deployment
 
-To build the React application for production deployment (e.g., to Vercel, Netlify, or static hosting):
+### Building for Production
+
+Compile static assets and verify build integrity:
 
 ```bash
 npm run build
 ```
 
-For the backend, ensure `NODE_ENV=production` is set on your hosting provider (e.g., Render, Railway, AWS) and start the server using `npm start` (or `node server/index.js`).
+### Vercel Deployment
+
+KYREN is pre-configured for one-click serverless deployment on Vercel:
+
+1. Push your repository to GitHub.
+2. Import the project into Vercel (Framework preset: **Vite**).
+3. Set the Environment Variables listed above in Vercel Project Settings.
+4. Deploy. Vercel automatically handles frontend SPA routing and binds `/api/index.js` as an Express serverless endpoint.
 
 ---
 
-## 🏆 Hackathon Notes: Why KYREN?
+## License
 
-Traditional LMS platforms say: **Course → Student**  
-Traditional AI chatbots say: **Question → Answer**
-
-**KYREN says: Conversation → Learner Model → Dynamic Learning Graph → Personalized Course → Continuous Adaptation.**
-
-The platform shifts the paradigm from standard syllabus delivery to dynamic, real-time curriculum generation, ensuring no student is left behind due to missing foundational knowledge.
+MIT License.
