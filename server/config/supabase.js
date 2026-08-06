@@ -45,10 +45,18 @@ export const supabase = createClient(
  */
 export function unwrap(result, context = "database query") {
   if (result.error) {
-    const err = new Error(`${context} failed: ${result.error.message}`)
-    err.status = 500
-    err.code = result.error.code || "database_error"
-    err.details = result.error.details
+    const rawMsg = String(result.error?.message || "")
+    const isHtml = rawMsg.includes("<!DOCTYPE") || rawMsg.includes("<html") || rawMsg.includes("<head")
+    const isTimeout = isHtml || rawMsg.includes("522") || rawMsg.includes("502") || rawMsg.includes("503") || rawMsg.includes("504") || rawMsg.includes("ETIMEDOUT")
+
+    const cleanMsg = isTimeout
+      ? "Database service is temporarily unreachable (connection timed out). Please try again in a few moments."
+      : rawMsg
+
+    const err = new Error(`${context} failed: ${cleanMsg}`)
+    err.status = isTimeout ? 503 : 500
+    err.code = isTimeout ? "service_unavailable" : (result.error.code || "database_error")
+    err.details = isHtml ? { isHtmlError: true } : result.error.details
     err.expected = true
     throw err
   }

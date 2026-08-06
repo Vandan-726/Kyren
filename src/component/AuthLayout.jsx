@@ -11,15 +11,15 @@ export default function AuthLayout({ icon: Icon, title, subtitle, footer, childr
 
             <div className="relative w-full max-w-md sf-rise">
                 {/* Brand */}
-                <div className="text-center mb-8">
-                    <Link to="/" className="inline-flex items-center gap-2.5 mb-8 group">
+                <div className="flex flex-col items-center text-center mb-8">
+                    <Link to="/" className="inline-flex items-center gap-2.5 mb-6 group">
                         <div className="w-10 h-10 rounded-xl bg-brand-black flex items-center justify-center sf-lift">
                             <Sparkles className="w-5 h-5 text-primary" />
                         </div>
                         <span className="sf-display text-xl text-foreground">Kyren</span>
                     </Link>
                     {Icon && (
-                        <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-primary mb-5 shadow-[0_14px_28px_-12px_rgba(227,74,50,0.6)]">
+                        <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-primary mb-4 shadow-[0_14px_28px_-12px_rgba(227,74,50,0.6)]">
                             <Icon className="w-7 h-7 text-primary-foreground" aria-hidden="true" />
                         </div>
                     )}
